@@ -1,0 +1,9 @@
+# The shop in dev: each app's values for this environment.
+apiVersion: muster/v1alpha1
+values:
+  backend:
+    message: hello from dev
+    logLevel: debug
+  frontend:
+    title: Shop (dev)
+    banner: Development build, data is reset nightly

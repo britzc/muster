@@ -1,0 +1,7 @@
+apiVersion: muster/v1alpha1
+images: { app: image.tag }       # nginx's version is captured too
+requires:
+  upstream:                      # nginx fronts the web app: muster wires its url in
+    type: http-service
+    values:
+      url: upstream.url

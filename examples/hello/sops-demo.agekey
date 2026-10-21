@@ -1,0 +1,6 @@
+# DEMO ONLY: the private key for this example's SOPS secrets, so it deploys
+# out of the box. Never commit a real key: keep it in a GitLab CI/CD variable
+# of type File, SOPS_AGE_KEY_FILE, and encrypt with your own .sops.yaml.
+# created: 2026-10-20T19:41:00+13:00
+# public key: age1z86mtheqdjh93ny95r86yh3ndve6guhddf0pvtcwf9s5epp6j5gqzpsswq
+AGE-SECRET-KEY-1XKYZDX329DM7Q7TSR2R5XNJ5SJVQ4FUMEQGGVAU30LVVNY8FJCYQW753J6

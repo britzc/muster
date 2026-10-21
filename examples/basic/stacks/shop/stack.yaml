@@ -1,0 +1,5 @@
+# The shop: two apps, deployed in this order.
+apiVersion: muster/v1alpha1
+members:
+  - backend
+  - frontend

@@ -1,0 +1,15 @@
+{{- $url := required "upstream.url is required" .Values.upstream.url -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  default.conf: |
+    server {
+      listen 80;
+      location = /healthz { return 200 "ok"; }
+      location / {
+        proxy_pass {{ trimSuffix "/" $url }};
+        add_header X-Served-By "nginx/$nginx_version" always;
+      }
+    }

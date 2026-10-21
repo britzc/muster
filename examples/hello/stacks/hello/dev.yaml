@@ -1,0 +1,5 @@
+apiVersion: muster/v1alpha1     # dev hosts the stack, with the apps' own values
+members:
+  mongodb:                       # in the stack, but not deployed until web uses it
+    disabled: true
+    reason: Not used yet; web gets a database in 1.2.0 (HELLO-12)

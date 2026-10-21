@@ -1,0 +1,10 @@
+replicaCount: 1
+image:
+  repository: nginx
+  tag: 1.27-alpine
+  pullPolicy: IfNotPresent
+title: Frontend
+banner: ""
+resources: {}
+global:
+  environment: ""

@@ -1,0 +1,5 @@
+apiVersion: muster/v1alpha1
+members:            # deploy order: the database, the app, then nginx in front of it
+  - mongodb
+  - web
+  - nginx

@@ -1,0 +1,3 @@
+# The backend app. Its chart is charts/backend (the app's name).
+apiVersion: muster/v1alpha1
+images: { app: image.tag }   # the image versions files set, and where its tag goes

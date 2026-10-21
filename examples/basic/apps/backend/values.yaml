@@ -1,0 +1,4 @@
+# The backend's values everywhere: what is true in every environment.
+message: hello from the backend
+resources:
+  requests: { cpu: 50m, memory: 32Mi }

@@ -1,0 +1,11 @@
+# qa: where it deploys, and values every release in qa gets.
+apiVersion: muster/v1alpha1
+cluster:
+  context: minikube           # point this at your qa cluster's kube context
+namespace: "{stack}-{env}"
+helm:
+  timeout: 5m
+  createNamespace: true
+values:
+  global:
+    environment: qa

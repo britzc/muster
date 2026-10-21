@@ -1,0 +1,4 @@
+# The frontend's values everywhere: what is true in every environment.
+title: Shop
+resources:
+  requests: { cpu: 50m, memory: 32Mi }

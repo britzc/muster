@@ -1,0 +1,21 @@
+replicaCount: 1
+image:
+  repository: web
+  tag: 1.0.0
+  pullPolicy: IfNotPresent
+init:                # an init container, run once before web starts
+  enabled: true
+  image:
+    repository: busybox
+    tag: 1.36.1
+    pullPolicy: IfNotPresent
+sidecar:             # a native sidecar beside web, serving /shared on port 8081
+  enabled: true
+  image:
+    repository: busybox
+    tag: 1.36.1
+    pullPolicy: IfNotPresent
+message: hello
+apiKey: ""          # a secret: set it in a SOPS file per environment, never here
+global:
+  environment: ""

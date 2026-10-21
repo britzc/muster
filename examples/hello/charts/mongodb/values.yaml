@@ -1,0 +1,5 @@
+image:
+  repository: mongo
+  tag: 7.0.14
+  pullPolicy: IfNotPresent
+global: {}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nginx
+description: nginx in front of an upstream web application
+type: application
+version: 0.1.0
+appVersion: "1.27.3"

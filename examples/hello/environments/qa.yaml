@@ -1,0 +1,13 @@
+apiVersion: muster/v1alpha1
+production: false
+cluster:
+  context: minikube               # the qa cluster's kube context; all minikube here
+namespace: "{stack}-{env}"
+helm:
+  wait: true
+  timeout: 3m
+  createNamespace: true
+values:                         # every release in qa
+  global:
+    environment: qa
+    imagePullPolicy: IfNotPresent   # images are built into minikube, or pulled once

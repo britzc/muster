@@ -1,0 +1,10 @@
+replicaCount: 1
+image:
+  repository: hashicorp/http-echo
+  tag: "1.0"
+  pullPolicy: IfNotPresent
+message: hello
+logLevel: info
+resources: {}
+global:
+  environment: ""

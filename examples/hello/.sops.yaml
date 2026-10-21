@@ -1,0 +1,5 @@
+# Which key sops encrypts the secrets files with. A real repo puts its own
+# age recipient here (and its private key in CI only).
+creation_rules:
+  - path_regex: stacks/.*\.secrets\.yaml$
+    age: age1z86mtheqdjh93ny95r86yh3ndve6guhddf0pvtcwf9s5epp6j5gqzpsswq      # sops-demo.agekey: demo only

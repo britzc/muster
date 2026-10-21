@@ -1,0 +1,12 @@
+# The shop in qa: each app's values for this environment.
+apiVersion: muster/v1alpha1
+values:
+  backend:
+    replicaCount: 2
+    message: hello from qa
+    resources:
+      requests: { cpu: 100m, memory: 64Mi }
+      limits:   { memory: 128Mi }
+  frontend:
+    replicaCount: 2
+    title: Shop (QA)

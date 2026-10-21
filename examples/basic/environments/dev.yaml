@@ -1,0 +1,11 @@
+# dev: where it deploys, and values every release in dev gets.
+apiVersion: muster/v1alpha1
+cluster:
+  context: minikube
+namespace: "{stack}-{env}"
+helm:
+  timeout: 3m
+  createNamespace: true
+values:
+  global:
+    environment: dev

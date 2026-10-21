@@ -1,0 +1,11 @@
+apiVersion: muster/v1alpha1
+members:
+  mongodb:                       # in the stack, but not deployed until web uses it
+    disabled: true
+    reason: Not used yet; web gets a database in 1.2.0 (HELLO-12)
+values:
+  web:
+    message: hello world from prod
+    replicaCount: 2
+  nginx:
+    replicaCount: 2

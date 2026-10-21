@@ -1,0 +1,9 @@
+apiVersion: muster/v1alpha1
+images:                           # its images' versions, set per environment by muster versions
+  app: image.tag
+  init: init.image.tag             # the init container
+  sidecar: sidecar.image.tag       # the sidecar
+provides:
+  - type: http-service
+    outputs:
+      url: "http://{release}.{namespace}.svc:8080"

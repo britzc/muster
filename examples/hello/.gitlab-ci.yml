@@ -1,0 +1,240 @@
+# The hello repository's pipeline. Every environment, stack and app comes from
+# muster list, so nothing here names one: adding an environment or a stack to
+# the repository adds it to the pipeline.
+#
+#   merge request   validate, and print every deploy (no --yes: nothing changes)
+#   main            deploy every stack: the non-production environments right
+#                   away, production as manual jobs
+#   Run pipeline    choose what to deploy, uninstall, restart or roll back;
+#                   manual jobs to start
+#   trigger         an app's pipeline ships a new image (see ship below)
+#
+# Only the default branch (main) deploys to every environment. A pipeline run
+# by hand from another branch offers only the non-production environments, for
+# testing a branch. Protect the production environments in GitLab (Settings >
+# CI/CD > Protected environments) to enforce it there too, and add required
+# approvals to have their jobs wait for an approver.
+#
+# The image is built from Muster's Dockerfile: muster, helm with the
+# helm-secrets plugin, sops, kubectl and git.
+#
+# Secrets: stacks/hello/<env>.web.secrets.yaml are SOPS-encrypted. muster
+# deploy passes them to helm as -f secrets://…, and helm-secrets decrypts them
+# with the age key in SOPS_AGE_KEY_FILE. Here that is the example's demo key;
+# in a real repo, add a GitLab CI/CD variable SOPS_AGE_KEY_FILE of type File
+# (protected and masked where it can be), which takes precedence over the one
+# below, and never commit the key.
+#
+# Cluster access comes from the job's kubeconfig; Muster only names the
+# context (cluster.context in environments/<env>.yaml). Either:
+#   - the GitLab agent for Kubernetes: set cluster.context to the agent's
+#     context, e.g. "platform/agents:qa", and GitLab provides the kubeconfig; or
+#   - a CI/CD variable KUBECONFIG of type File, holding contexts with the
+#     names used in environments/*.yaml.
+#
+# Shipping and promoting versions commits stacks/<stack>/<env>.versions.yaml
+# back to the repository, so it needs a project access token with
+# write_repository, in the masked variable DEPLOY_TOKEN. Both start from the
+# latest main and take turns (resource_group: versions), so neither pushes
+# over the other.
+
+spec:
+  inputs:
+    action:
+      description: Deploy, uninstall (protected releases, like databases, are always kept), restart, or roll back to each release's previous revision
+      options: [deploy, uninstall, restart, rollback]
+      default: deploy
+    deploy:
+      description: Stacks into environments, or an app into the stacks and environments that have it
+      options: [stack, app]
+      default: stack
+    app:
+      description: "app only: the app, or empty for every app"
+      default: ""
+    version:
+      description: "app only: a tag[@digest] to deploy instead of the repository's version, for testing; not committed"
+      default: ""
+---
+
+default:
+  image: registry.example.com/platform/muster:1
+
+variables:
+  # Environments this pipeline never deploys to, space-separated, e.g. a
+  # "local" environment on a laptop. hello deploys to all of dev, qa and prod.
+  SKIP_ENVIRONMENTS: ""
+  # The age key helm-secrets decrypts the secrets files with (see above).
+  # Child pipelines inherit it.
+  SOPS_AGE_KEY_FILE: $CI_PROJECT_DIR/sops-demo.agekey
+
+stages: [check, deploy]
+
+# The environments this pipeline deploys to, in deploy order:
+#   ci_environments [list filters]   what muster list environments gives, but
+#       SKIP_ENVIRONMENTS, and off the default branch only non-production ones
+#   is_production <env>
+#
+# muster list --names gives only what is not disabled (disabled: true in an
+# environment, a stack's environment file or a member entry), so nothing here
+# offers or changes a disabled one.
+.environments:
+  script:
+    - |
+      PRODUCTION=" $(muster list environments --production --names | tr '\n' ' ') "
+      is_production() { case "$PRODUCTION" in *" $1 "*) return 0 ;; esac; return 1; }
+      ci_environments() {
+        if [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then set -- "$@" --production=false; fi
+        for env in $(muster list environments "$@" --names); do
+          case " $SKIP_ENVIRONMENTS " in *" $env "*) ;; *) echo "$env" ;; esac
+        done
+      }
+
+# A job that changes versions starts from the latest default branch, not the
+# commit its pipeline ran for: another ship or promote may have pushed since.
+.latest-main:
+  script:
+    - git fetch origin "$CI_DEFAULT_BRANCH"
+    - git checkout -B "$CI_DEFAULT_BRANCH" FETCH_HEAD
+
+# Commit the versions files a job changed and push them to the default
+# branch, so the next pipeline deploys the same versions. A commit merged
+# while the job ran is taken in first. [skip ci] keeps the push from starting
+# another pipeline: the job that changed them deploys them.
+.commit-versions:
+  script:
+    - git config user.name "$GITLAB_USER_NAME"
+    - git config user.email "$GITLAB_USER_EMAIL"
+    - git add stacks/*/*.versions.yaml
+    - git diff --cached --quiet || git commit -m "$COMMIT_MESSAGE [skip ci]"
+    - git fetch origin "$CI_DEFAULT_BRANCH" && git rebase FETCH_HEAD
+    - git push "https://oauth2:${DEPLOY_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:${CI_DEFAULT_BRANCH}"
+
+# Every merge request and main: the whole repository is valid, and every
+# stack's deploy in every environment, printed only.
+check:
+  stage: check
+  script:
+    - muster validate
+    - |
+      for env in $(muster list environments --names); do
+        for stack in $(muster list stacks -e "$env" --names); do
+          echo "# $stack in $env"
+          muster deploy -e "$env" --stack "$stack"
+        done
+      done
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# The matrix, as a child pipeline that muster generate gitlab-ci writes: a
+# stage per environment, a job per cell (muster generate gitlab-ci --help).
+#   main         every stack in every environment; non-production jobs run,
+#                production ones are manual (--auto)
+#   Run pipeline the inputs' choice, every job manual:
+#     stack              a stage per environment, a job per stack it hosts
+#     app                a stage per environment, a job per app it deploys
+#     app named          one stage, a job per environment that deploys the app
+#     app and version    the same, each job setting the version first where the
+#                        app runs its own chart (not committed)
+# Off the default branch only the non-production environments
+# (--production=false), and never SKIP_ENVIRONMENTS.
+plan:
+  stage: check
+  variables:
+    ACTION: $[[ inputs.action ]]
+    DEPLOY: $[[ inputs.deploy ]]
+    APP: $[[ inputs.app ]]
+    VERSION: $[[ inputs.version ]]
+  script:
+    - |
+      set -- --action "$ACTION" --by "$DEPLOY" --image "$CI_JOB_IMAGE"
+      if [ -n "$APP" ]; then set -- "$@" "$APP"; fi
+      if [ -n "$VERSION" ]; then set -- "$@" --version "$VERSION"; fi
+      if [ "$CI_PIPELINE_SOURCE" = push ]; then set -- "$@" --auto; fi
+      if [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then set -- "$@" --production=false; fi
+      for env in $SKIP_ENVIRONMENTS; do set -- "$@" --skip "$env"; done
+      muster generate gitlab-ci "$@" > matrix.yml
+    - cat matrix.yml
+  artifacts:
+    paths: [matrix.yml]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+matrix:
+  stage: deploy
+  needs: [plan]
+  trigger:
+    include:
+      - artifact: matrix.yml
+        job: plan
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Ship a new image, a new chart or both to every non-production environment
+# that runs the app's chart, from the app's pipeline. TAG is the app's image
+# named app when it has several (web's init container and sidecar are set by
+# name: muster versions set web.sidecar=…). DIGEST is optional, and
+# Muster passes it on unchecked; CHART is the version of an app's chart in a
+# registry (oci://… or https://… in its app.yaml), for an app whose pipeline
+# publishes one:
+#   curl -X POST -F token=$TRIGGER_TOKEN -F ref=main \
+#     -F "variables[APP]=payments" -F "variables[TAG]=1.4.2" -F "variables[DIGEST]=sha256:…" \
+#     -F "variables[CHART]=1.4.2" \
+#     https://gitlab.example.com/api/v4/projects/<id>/trigger/pipeline
+ship:
+  stage: deploy
+  variables:
+    COMMIT_MESSAGE: "ship $APP $TAG $CHART"
+  script:
+    - !reference [.latest-main, script]
+    - !reference [.environments, script]
+    - |
+      set -- ${TAG:+"$APP=$TAG${DIGEST:+@$DIGEST}"} ${CHART:+"$APP.chart=$CHART"}
+      shipped=""
+      for env in $(ci_environments "$APP" --versioned --production=false); do
+        for stack in $(muster list stacks "$APP" -e "$env" --versioned --names); do
+          muster versions set "$@" -e "$env" --stack "$stack" --write
+        done
+        shipped="$shipped $env"
+      done
+      if [ -z "$shipped" ]; then echo "no non-production environment runs $APP's chart"; exit 1; fi
+    - !reference [.commit-versions, script]
+    - for env in $shipped; do muster deploy "$APP" -e "$env" --all-stacks --yes; done
+  resource_group: versions
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "trigger" && $APP && ($TAG || $CHART)
+
+# Copy into each production environment the tags the last non-production
+# environment before it runs, stack by stack, then deploy production. A tag
+# production refuses (versions.tags in its environment file) stops it.
+promote:
+  stage: deploy
+  variables:
+    COMMIT_MESSAGE: "promote to production"
+  script:
+    - !reference [.latest-main, script]
+    - !reference [.environments, script]
+    - |
+      promoted=""
+      for env in $(ci_environments --production); do
+        for stack in $(muster list stacks -e "$env" --names); do
+          from=$(ci_environments --stack "$stack" --production=false | tail -n 1)
+          if [ -z "$from" ] || [ ! -f "stacks/$stack/$from.versions.yaml" ]; then
+            echo "# $stack in $env: no versions to promote"
+            continue
+          fi
+          muster versions promote --from "$from" -e "$env" --stack "$stack" --write
+          promoted="$promoted $env:$stack"
+        done
+      done
+    - !reference [.commit-versions, script]
+    - |
+      for cell in $promoted; do
+        muster deploy -e "${cell%%:*}" --stack "${cell#*:}" --yes
+      done
+  resource_group: versions
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual

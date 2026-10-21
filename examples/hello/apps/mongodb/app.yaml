@@ -1,0 +1,2 @@
+apiVersion: muster/v1alpha1
+images: { app: image.tag }       # mongo's version is captured like the others
