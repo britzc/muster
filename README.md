@@ -51,7 +51,7 @@ dev          no        -
 qa           no        -
 prod         no        -
 
-$ muster releases -e dev --stack hello
+$ muster releases --env dev --stack hello
 STACK  ORDER  APP      RELEASE        MODE  CHART           NAMESPACE  CONTEXT   PROTECTED  SECRETS  DISABLED  REASON
 hello  1      mongodb  hello-mongodb  helm  charts/mongodb  hello-dev  minikube  no         -        yes       mongodb is disabled in dev: Not used yet; web gets a database in 1.2.0 (HELLO-12)
 hello  2      web      hello-web      helm  charts/web      hello-dev  minikube  no         -        no        -
@@ -61,7 +61,7 @@ hello  3      nginx    hello-nginx    helm  charts/nginx    hello-dev  minikube 
 **Every image's version is captured per environment**, in `stacks/hello/<env>.versions.yaml`, mongodb's too. web's pod also runs an init container and a sidecar, each with its own version:
 
 ```console
-$ muster versions -e dev --stack hello
+$ muster versions --env dev --stack hello
 STACK  APP      IMAGE    VALUE          FROM                            DISABLED  REASON
 hello  mongodb  app      7.0.14         stacks/hello/dev.versions.yaml  yes       mongodb is disabled in dev: Not used yet; web gets a database in 1.2.0 (HELLO-12)
 hello  web      app      1.1.0          stacks/hello/dev.versions.yaml  no        -
@@ -73,7 +73,7 @@ hello  nginx    app      1.27.4-alpine  stacks/hello/dev.versions.yaml  no      
 **See the values each release gets.** Later layers win (app → environment → stack in environment → wiring → versions), and every key names the file that set it. nginx gets web's url through wiring, so nothing names it by hand:
 
 ```console
-$ muster values web -e qa --stack hello
+$ muster values --app web --env qa --stack hello
 # muster: values for hello-web [helm] charts/web
 message: hello world from qa # stacks/hello/qa.yaml › values.web
 global: # environments/qa.yaml › values
@@ -88,7 +88,7 @@ sidecar: # stacks/hello/qa.versions.yaml › versions.web.sidecar
   image:
     tag: 1.36.1 # stacks/hello/qa.versions.yaml › versions.web.sidecar
 
-$ muster values nginx -e qa --stack hello
+$ muster values --app nginx --env qa --stack hello
 # muster: values for hello-nginx [helm] charts/nginx
 global: # environments/qa.yaml › values
   environment: qa # environments/qa.yaml › values
@@ -102,7 +102,7 @@ image: # stacks/hello/qa.versions.yaml › versions.nginx.app
 **Compare two environments**, or add `--explain` to see the chart's defaults too:
 
 ```console
-$ diff <(muster values web -e qa --stack hello) <(muster values web -e prod --stack hello)
+$ diff <(muster values --app web --env qa --stack hello) <(muster values --app web --env prod --stack hello)
 2,7c2,8
 < message: hello world from qa # stacks/hello/qa.yaml › values.web
 …
@@ -114,7 +114,7 @@ $ diff <(muster values web -e qa --stack hello) <(muster values web -e prod --st
 **See the helm calls a deploy or teardown would make**, in order (uninstall runs in reverse). Without `--yes`, nothing runs. The disabled mongodb keeps its place with the reason:
 
 ```console
-$ muster deploy -e qa --stack hello
+$ muster deploy --env qa --stack hello
 muster: printing only; add --yes to run
 # skip hello-mongodb: mongodb is disabled in qa: Not used yet; web gets a database in 1.2.0 (HELLO-12)
 helm upgrade --install hello-web charts/web --kube-context minikube --namespace hello-qa --wait --timeout 3m --create-namespace -f -
@@ -128,7 +128,7 @@ $ minikube start
 $ minikube image build -t web:1.0.0 src/web
 $ minikube image build -t web:1.1.0 src/web
 $ export SOPS_AGE_KEY_FILE=$PWD/sops-demo.agekey
-$ for env in $(muster list environments --names); do muster deploy -e $env --stack hello --yes; done
+$ for env in $(muster list environments --names); do muster deploy --env $env --stack hello --yes; done
 
 $ kubectl port-forward -n hello-qa svc/hello-nginx 8080:80 &
 $ curl -i localhost:8080
@@ -143,23 +143,23 @@ web shows the last four characters of its key only, so you can see that qa got q
 **Ship and promote a version.** Each environment says which tags it takes; prod takes release tags only:
 
 ```console
-$ muster versions set web=1.1.0 nginx=1.27.4-alpine -e qa --stack hello --write
+$ muster versions set web=1.1.0 nginx=1.27.4-alpine --env qa --stack hello --write
 muster: wrote stacks/hello/qa.versions.yaml
-$ muster deploy -e qa --stack hello --yes
+$ muster deploy --env qa --stack hello --yes
 
-$ muster versions set web=feature-x -e prod --stack hello
+$ muster versions set web=feature-x --env prod --stack hello
 muster: error V004: stacks/hello/prod.versions.yaml: versions.web.app: tag "feature-x" is not accepted in prod; its tags match [0-9]+\.[0-9]+\.[0-9]+(-alpine)? (versions.tags in environments/prod.yaml)
 
-$ muster versions promote --from qa -e prod --stack hello --write
+$ muster versions promote --from qa --env prod --stack hello --write
 muster: wrote stacks/hello/prod.versions.yaml
-$ muster deploy -e prod --stack hello --yes
+$ muster deploy --env prod --stack hello --yes
 ```
 
 **Tear down.** prod is a production environment, so it also needs `--confirm prod`:
 
 ```console
-$ muster uninstall -e qa --stack hello --yes
-$ muster uninstall -e prod --stack hello --yes --confirm prod
+$ muster uninstall --env qa --stack hello --yes
+$ muster uninstall --env prod --stack hello --yes --confirm prod
 ```
 
 For real clusters, set `cluster.context` in each `environments/<env>.yaml` to its kube context.
@@ -170,17 +170,17 @@ A matrix deployment covers several environments, stacks and apps at once. Its ce
 
 | Matrix | Rows × columns | Each cell |
 |---|---|---|
-| Every stack everywhere | `list environments` × `list stacks -e <env>` | `muster deploy -e <env> --stack <stack>` |
-| One stack everywhere | `list environments --stack <stack>` | `muster deploy -e <env> --stack <stack>` |
-| One app everywhere | `list environments <app> --mode helm,mock` | `muster deploy <app> -e <env> --all-stacks` |
-| Every app in one environment | `list apps -e <env> --mode helm,mock` | `muster deploy <app> -e <env> --all-stacks` |
-| Every app everywhere | `list environments` × `list apps -e <env> --mode helm,mock` | `muster deploy <app> -e <env> --all-stacks` |
+| Every stack everywhere | `list environments` × `list stacks --env <env>` | `muster deploy --env <env> --stack <stack>` |
+| One stack everywhere | `list environments --stack <stack>` | `muster deploy --env <env> --stack <stack>` |
+| One app everywhere | `list environments --app <app> --mode helm,mock` | `muster deploy --app <app> --env <env> --all-stacks` |
+| Every app in one environment | `list apps --env <env> --mode helm,mock` | `muster deploy --app <app> --env <env> --all-stacks` |
+| Every app everywhere | `list environments` × `list apps --env <env> --mode helm,mock` | `muster deploy --app <app> --env <env> --all-stacks` |
 
 `--mode helm,mock` leaves out external members, which have nothing to deploy. An app deploy with `--all-stacks` covers every stack in the environment that has the app, since an environment can host several. Rows come in deploy order, so a loop deploys test environments before production:
 
 ```sh
 for env in $(muster list environments --stack hello --names); do
-  muster deploy -e "$env" --stack hello --yes
+  muster deploy --env "$env" --stack hello --yes
 done
 ```
 
@@ -195,13 +195,13 @@ deploy hello in dev:
   resource_group: dev
   when: on_success
   script:
-    - muster deploy -e dev --stack hello --yes
+    - muster deploy --env dev --stack hello --yes
 …
-$ muster generate gitlab-ci --by app web --version 1.2.0 --production=false   # a test build of web, where it runs
-$ muster generate gitlab-ci --action restart --skip local                     # restart every stack, but on a laptop
+$ muster generate gitlab-ci --by app --app web --tag 1.2.0 --production=false  # a test build of web, where it runs
+$ muster generate gitlab-ci --action restart --skip local                      # restart every stack, but on a laptop
 ```
 
-`--by stack` (the default) gives a job per stack an environment hosts, `--by app` one per app it deploys, and an app named one stage with a job per environment. What is disabled gets no job, an app only gets one where it runs a chart or a mock, and an uninstall from production carries `--confirm`. `muster generate gitlab-ci --help` has every flag.
+`--by stack` (the default) gives a job per stack an environment hosts, `--by app` one per app it deploys, and an app named one stage with a job per environment. What is disabled gets no job, an app only gets one where it runs a chart or a mock, and an uninstall from production carries `--confirm`. `muster generate gitlab-ci --help` has every flag. [MATRIX.md](MATRIX.md) explains the continuous delivery principles behind matrix deployments.
 
 ## Disabling an environment, a stack or an app
 
@@ -255,8 +255,8 @@ In the hello example, `mongodb` is disabled in every environment: it is part of 
 
 | Choice | Child pipeline |
 |---|---|
-| `stack` | A stage per environment, a job per stack it hosts: `muster <action> -e <env> --stack <stack> --yes` |
-| `app`, no name | A stage per environment, a job per app it deploys: `muster <action> <app> -e <env> --all-stacks --yes` |
+| `stack` | A stage per environment, a job per stack it hosts: `muster <action> --env <env> --stack <stack> --yes` |
+| `app`, no name | A stage per environment, a job per app it deploys: `muster <action> --app <app> --env <env> --all-stacks --yes` |
 | `app` with a name | One stage, a job per environment that deploys the app |
 | `app` with a name and a `version` (deploy only) | The same, each job first running `muster versions set <app>=<version> … --write` (the app's image named `app` when it has several) where the app runs its own chart. The change stays in the job and is not committed: for testing a build |
 
@@ -295,25 +295,25 @@ An environment hosts a stack when `stacks/<stack>/<env>.yaml` exists, and runs e
 |---|---|
 | `muster validate` | Prints every problem in the repository, with its rule code; exits 1 if there are errors, so it works as a CI gate |
 | `muster list environments\|stacks\|apps` | Prints each, and whether it is disabled and why; `--names` for the ones not disabled, one per line, for scripts; `--json` |
-| `muster releases [app] <selection>` | Prints the releases in deploy order, with everything needed to act on them; `--json` for scripts |
-| `muster values <app> <selection>` | Prints the values one release gets: the file to pass to `helm -f` |
-| `muster values [app] <selection> --explain` | The same values over the chart's defaults, with a header per release, for review |
-| `muster deploy [app] <selection>` | Prints the `helm upgrade --install` calls, in deploy order; `--yes` runs them |
-| `muster uninstall [app] <selection>` | Prints the `helm uninstall` calls, in reverse order; `--yes` runs them, `--confirm <env>` too for a production environment |
-| `muster restart [app] <selection>` | Prints a `kubectl rollout restart` per release, in order, each followed by a `rollout status` that waits; `--yes` runs them |
-| `muster rollback [app] <selection>` | Prints the `helm rollback` calls, in reverse order, to each release's previous revision or `--to <revision>`; `--yes` runs them |
-| `muster versions [app] <selection>` | Prints each release's images, the version each gets and where it comes from; `--json` for scripts |
+| `muster releases [--app <app>] <selection>` | Prints the releases in deploy order, with everything needed to act on them; `--json` for scripts |
+| `muster values --app <app> <selection>` | Prints the values one release gets: the file to pass to `helm -f` |
+| `muster values [--app <app>] <selection> --explain` | The same values over the chart's defaults, with a header per release, for review |
+| `muster deploy [--app <app>] <selection>` | Prints the `helm upgrade --install` calls, in deploy order; `--yes` runs them |
+| `muster uninstall [--app <app>] <selection>` | Prints the `helm uninstall` calls, in reverse order; `--yes` runs them, `--confirm <env>` too for a production environment |
+| `muster restart [--app <app>] <selection>` | Prints a `kubectl rollout restart` per release, in order, each followed by a `rollout status` that waits; `--yes` runs them |
+| `muster rollback [--app <app>] <selection>` | Prints the `helm rollback` calls, in reverse order, to each release's previous revision or `--to <revision>`; `--yes` runs them |
+| `muster versions [--app <app>] <selection>` | Prints each release's images, the version each gets and where it comes from; `--json` for scripts |
 | `muster versions set\|promote … --write` | Changes a stack's image versions in one environment (the only file Muster writes) |
-| `muster generate gitlab-ci [app]` | Prints a GitLab child pipeline for a matrix: a stage per environment, a job per cell ([Matrix deployments](#matrix-deployments)) |
+| `muster generate gitlab-ci [--app <app>]` | Prints a GitLab child pipeline for a matrix: a stage per environment, a job per cell ([Matrix deployments](#matrix-deployments)) |
 
-Every command that selects releases takes the same form, `muster <command> [app] -e <env> --stack <stack>`, and only flags: Muster reads no environment variables, so a command line always means the same thing. The stack is always named, even when an environment hosts only one, so a command means the same thing after a stack is added.
+Every command that selects releases takes the same form, `muster <command> --env <env> --stack <stack> [--app <app>]`, and only flags, in any order: Muster reads no environment variables, so a command line always means the same thing. The stack is always named, even when an environment hosts only one, so a command means the same thing after a stack is added. Each selection flag has a short form for typing: `-e`, `-s`, `-a`, and `-t` for `generate gitlab-ci --tag`.
 
 | Selection | Selects |
 |---|---|
-| `-e <env> --stack <stack>` | Every member of the stack in the environment (repeat `--stack` for more) |
-| `<app> -e <env> --stack <stack>` | Just that app in that stack |
-| `-e <env> --all-stacks` | Every stack the environment hosts |
-| `<app> -e <env> --all-stacks` | That app in every hosted stack that contains it |
+| `--env <env> --stack <stack>` | Every member of the stack in the environment (repeat `--stack` for more) |
+| `--app <app> --env <env> --stack <stack>` | Just that app in that stack |
+| `--env <env> --all-stacks` | Every stack the environment hosts |
+| `--app <app> --env <env> --all-stacks` | That app in every hosted stack that contains it |
 
 **Exit codes:** 0 when the command did what it says. 2 when the command line is wrong: an unknown command or flag, a missing, conflicting or malformed flag or argument, or a name the repository doesn't have where the command line uses it (an environment, stack or app that doesn't exist, a stack the environment doesn't host, an app not in the stack); fix the command. 1 when the command line is fine but the result isn't: the repository has a problem or refuses the change (validation errors, something disabled, a tag the environment doesn't take, nothing to do), or helm or kubectl failed; fix the repository or the cluster.
 
@@ -330,7 +330,7 @@ mongodb  yes       mongodb is disabled in dev: Not used yet; web gets a database
 web      no        -
 nginx    no        -
 
-$ muster list apps -e qa --names
+$ muster list apps --env qa --names
 nginx
 web
 ```
@@ -338,28 +338,28 @@ web
 `--names` prints only the ones not disabled, one per line: the form for scripts and pipelines. `--json` gives an array of `name`, `disabled` and `reason`.
 
 ```
-muster list environments                       # every environment, in deploy order
-muster list stacks                             # every stack
-muster list apps                               # every app
+muster list environments                           # every environment, in deploy order
+muster list stacks                                 # every stack
+muster list apps                                   # every app
 
-muster list environments web                   # the environments where a stack has web
-muster list environments --stack hello         # the environments that host hello
-muster list stacks -e qa                       # the stacks qa hosts
-muster list stacks web -e qa                   # the stacks in qa that have web
-muster list apps -e qa                         # the apps in the stacks qa hosts
-muster list apps --stack hello                 # its members, in deploy order
+muster list environments --app web                 # the environments where a stack has web
+muster list environments --stack hello             # the environments that host hello
+muster list stacks --env qa                        # the stacks qa hosts
+muster list stacks --app web --env qa              # the stacks in qa that have web
+muster list apps --env qa                          # the apps in the stacks qa hosts
+muster list apps --stack hello                     # its members, in deploy order
 
-muster list apps -e qa --mode helm,mock        # what deploying qa installs (no external members)
-muster list environments web --mode helm       # where web runs a chart
-muster list stacks web -e qa --versioned       # where versions set web=… works in qa
-muster list environments --production=false    # the test environments: dev qa (--production: prod)
+muster list apps --env qa --mode helm,mock         # what deploying qa installs (no external members)
+muster list environments --app web --mode helm     # where web runs a chart
+muster list stacks --app web --env qa --versioned  # where versions set web=… works in qa
+muster list environments --production=false        # the test environments: dev qa (--production: prod)
 ```
 
 | Command | Takes |
 |---|---|
-| `list environments [app]` | `--stack <stack>`, `--mode <mode>`, `--versioned`, `--production[=false]` |
-| `list stacks [app]` | `-e <env>`, `--mode <mode>`, `--versioned` |
-| `list apps` | `-e <env>`, `--stack <stack>`, `--mode <mode>`, `--versioned` |
+| `list environments` | `--app <app>`, `--stack <stack>`, `--mode <mode>`, `--versioned`, `--production[=false]` |
+| `list stacks` | `--app <app>`, `--env <env>`, `--mode <mode>`, `--versioned` |
+| `list apps` | `--env <env>`, `--stack <stack>`, `--mode <mode>`, `--versioned` |
 
 Each also takes `--names` or `--json`. The filters combine, and each narrows to where an environment hosts a stack that has the app. `--stack` repeats; `--mode` (helm, mock or external, the mode `releases` shows) repeats or takes a comma-separated list. A name that doesn't exist is an error, not an empty list. `list` reads only the stack files, so a stack with errors elsewhere in the repository never stops it (`validate` reports those). Environments come in deploy order: those with `production: false` first, then the production ones, each by name. Apps of one stack come in member order; otherwise names are sorted. A name is disabled only when it is disabled everywhere the filters select: a stack with one disabled member is not.
 
@@ -375,14 +375,14 @@ Muster merges the layers with Helm's own rules and leaves the chart's defaults t
 
 A mock or a provider's chart doesn't get the app's values file or its image versions: it gets the environment's values, then `values.<app>` from the stack's environment file. `values` refuses an `external` member, since Muster deploys nothing for it.
 
-Muster doesn't render manifests: `muster values <app> … | helm template <release> <chart> -f -` does, exactly as a deploy would, and `| kubectl apply --dry-run=server -f -` lets the cluster check them.
+Muster doesn't render manifests: `muster values --app <app> … | helm template <release> <chart> -f -` does, exactly as a deploy would, and `| kubectl apply --dry-run=server -f -` lets the cluster check them.
 
 ### `deploy`, `uninstall`, `restart` and `rollback`
 
 For a stack with external and protected members (a database, say), the skipped ones keep their place with the reason:
 
 ```console
-$ muster uninstall -e prod --stack customer-platform
+$ muster uninstall --env prod --stack customer-platform
 muster: printing only; add --yes to run
 helm uninstall customer-platform-billing --kube-context prod-eks --namespace customer-platform --wait --timeout 15m --ignore-not-found
 helm uninstall customer-platform-payments --kube-context prod-eks --namespace customer-platform --wait --timeout 15m --ignore-not-found
@@ -405,7 +405,7 @@ The rules are applied once, in Muster:
 **Restart** a release's deployments, statefulsets and daemonsets, found by Helm's standard `app.kubernetes.io/instance` label. In an environment with `helm.wait`, each restart is followed by a `kubectl rollout status` that waits up to `helm.timeout`:
 
 ```console
-$ muster restart web -e qa --stack hello
+$ muster restart --app web --env qa --stack hello
 muster: printing only; add --yes to run
 kubectl rollout restart deployment,statefulset,daemonset -l app.kubernetes.io/instance=hello-web --context minikube --namespace hello-qa
 kubectl rollout status deployment,statefulset,daemonset -l app.kubernetes.io/instance=hello-web --context minikube --namespace hello-qa --timeout 3m
@@ -416,7 +416,7 @@ A workload without the label isn't restarted: kubectl reports "No resources foun
 **Roll back** a release to its previous revision, or to the one `--to` names (`helm history <release>` lists them; `--to` takes a single release):
 
 ```console
-$ muster rollback web -e prod --stack hello --to 3
+$ muster rollback --app web --env prod --stack hello --to 3
 muster: printing only; add --yes to run
 helm rollback hello-web 3 --kube-context minikube --namespace hello-prod --wait --timeout 3m
 ```
@@ -424,10 +424,10 @@ helm rollback hello-web 3 --kube-context minikube --namespace hello-prod --wait 
 A rollback changes the cluster only. The repository still records the newer version and values, so the next deploy brings them back. It's the quick fix; to keep it, set the version it went back to and commit, as for any other version ([`versions`](#versions)):
 
 ```bash
-muster versions set web=1.0.0 -e prod --stack hello --write
+muster versions set web=1.0.0 --env prod --stack hello --write
 ```
 
-**Check one release** with helm directly; `muster releases <app> … --json` gives the release, namespace and kube context:
+**Check one release** with helm directly; `muster releases --app <app> … --json` gives the release, namespace and kube context:
 
 ```bash
 helm status hello-web --namespace hello-qa --kube-context minikube
@@ -439,12 +439,12 @@ helm history hello-web --namespace hello-qa --kube-context minikube
 Image versions live in `stacks/<stack>/<env>.versions.yaml`, apart from the values ([why](CONCEPT.md#8-image-versions)). `muster versions` changes the file; nobody edits it by hand:
 
 ```bash
-muster versions set web=1.1.0 nginx=1.27.4-alpine -e qa --stack hello --write   # ship to qa
-muster versions promote --from qa -e prod --stack hello --write                    # what qa runs, into prod
+muster versions set web=1.1.0 nginx=1.27.4-alpine --env qa --stack hello --write  # ship to qa
+muster versions promote --from qa --env prod --stack hello --write                # what qa runs, into prod
 ```
 
 ```console
-$ muster versions -e prod --stack hello
+$ muster versions --env prod --stack hello
 STACK  APP      IMAGE    VALUE          FROM                             DISABLED  REASON
 hello  mongodb  app      7.0.14         stacks/hello/prod.versions.yaml  yes       mongodb is disabled in prod: Not used yet; web gets a database in 1.2.0 (HELLO-12)
 hello  web      app      1.0.0          stacks/hello/prod.versions.yaml  no        -
@@ -484,10 +484,10 @@ chartVersion: 15.5.0
 An app's own chart moves through the environments like its image: its version is in each versions file, as `web.chart`:
 
 ```console
-$ muster versions set web=1.1.0 web.chart=1.4.0 -e qa --stack hello --write
-$ muster deploy web -e qa --stack hello
+$ muster versions set web=1.1.0 web.chart=1.4.0 --env qa --stack hello --write
+$ muster deploy --app web --env qa --stack hello
 helm upgrade --install hello-web oci://123456789012.dkr.ecr.eu-west-1.amazonaws.com/charts/web --version 1.4.0 --kube-context … -f -
-$ muster versions promote --from qa -e prod --stack hello --write      # the image and the chart
+$ muster versions promote --from qa --env prod --stack hello --write   # the image and the chart
 ```
 
 - **Exact versions only** (`1.4.0`, `1.5.0-rc.1`), no ranges, so the same files always deploy the same chart. `versions.tags` checks image tags, not chart versions.
@@ -495,7 +495,7 @@ $ muster versions promote --from qa -e prod --stack hello --write      # the ima
 - **Muster can't see the chart's defaults.** `values --explain` says so, with the `helm show values …` command that shows them. So an image of such an app takes its tag from the versions file or the values, never the chart's default (V007): the tag policy still sees every tag.
 - **Images** come from any registry already: Muster only sets the tag. Put the repository in the values (`image.repository: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/web`, or per environment), and give the cluster pull access (on EKS, the nodes' IAM role).
 
-`muster values web … | helm template hello-web oci://… --version 1.4.0 -f -` renders it as a deploy would.
+`muster values --app web … | helm template hello-web oci://… --version 1.4.0 -f -` renders it as a deploy would.
 
 ### Secrets (SOPS)
 
@@ -509,13 +509,13 @@ creation_rules:
   - path_regex: stacks/.*\.secrets\.yaml$
     age: age1z86mtheqdjh93ny95r86yh3ndve6guhddf0pvtcwf9s5epp6j5gqzpsswq      # sops-demo.agekey: demo only
 
-$ muster deploy web -e prod --stack hello
+$ muster deploy --app web --env prod --stack hello
 helm upgrade --install hello-web charts/web … -f - -f secrets://stacks/hello/prod.web.secrets.yaml
 
 $ sops edit stacks/hello/prod.web.secrets.yaml            # change a secret (needs the key)
 ```
 
-The chart turns `apiKey` into a Kubernetes Secret; the value never appears in Muster's output. To render with secrets yourself: `muster values web … | helm template … -f - -f secrets://stacks/hello/prod.web.secrets.yaml`, which then holds them in plain text.
+The chart turns `apiKey` into a Kubernetes Secret; the value never appears in Muster's output. To render with secrets yourself: `muster values --app web … | helm template … -f - -f secrets://stacks/hello/prod.web.secrets.yaml`, which then holds them in plain text.
 
 **Setting it up:** install `sops` and the helm-secrets plugin. With Helm 4 that is two signed plugins, `secrets` and `secrets-getter` (`helm plugin install https://github.com/jkroepke/helm-secrets/releases/download/v4.7.9/secrets-getter-4.7.9.tgz`, and the same for `secrets`), verified against the author's key ([the Dockerfile](Dockerfile) shows how). Point `SOPS_AGE_KEY_FILE` at the age key. The example commits a demo key so it deploys out of the box; a real repository commits only `.sops.yaml` with its public recipient, and keeps the private key in CI (a File variable) and with the people allowed to change secrets.
 

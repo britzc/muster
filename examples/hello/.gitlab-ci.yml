@@ -117,9 +117,9 @@ check:
     - muster validate
     - |
       for env in $(muster list environments --names); do
-        for stack in $(muster list stacks -e "$env" --names); do
+        for stack in $(muster list stacks --env "$env" --names); do
           echo "# $stack in $env"
-          muster deploy -e "$env" --stack "$stack"
+          muster deploy --env "$env" --stack "$stack"
         done
       done
   rules:
@@ -194,14 +194,14 @@ ship:
       set -- ${TAG:+"$APP=$TAG${DIGEST:+@$DIGEST}"} ${CHART:+"$APP.chart=$CHART"}
       shipped=""
       for env in $(ci_environments "$APP" --versioned --production=false); do
-        for stack in $(muster list stacks "$APP" -e "$env" --versioned --names); do
-          muster versions set "$@" -e "$env" --stack "$stack" --write
+        for stack in $(muster list stacks --app "$APP" --env "$env" --versioned --names); do
+          muster versions set "$@" --env "$env" --stack "$stack" --write
         done
         shipped="$shipped $env"
       done
       if [ -z "$shipped" ]; then echo "no non-production environment runs $APP's chart"; exit 1; fi
     - !reference [.commit-versions, script]
-    - for env in $shipped; do muster deploy "$APP" -e "$env" --all-stacks --yes; done
+    - for env in $shipped; do muster deploy --app "$APP" --env "$env" --all-stacks --yes; done
   resource_group: versions
   rules:
     - if: $CI_PIPELINE_SOURCE == "trigger" && $APP && ($TAG || $CHART)
@@ -219,20 +219,20 @@ promote:
     - |
       promoted=""
       for env in $(ci_environments --production); do
-        for stack in $(muster list stacks -e "$env" --names); do
+        for stack in $(muster list stacks --env "$env" --names); do
           from=$(ci_environments --stack "$stack" --production=false | tail -n 1)
           if [ -z "$from" ] || [ ! -f "stacks/$stack/$from.versions.yaml" ]; then
             echo "# $stack in $env: no versions to promote"
             continue
           fi
-          muster versions promote --from "$from" -e "$env" --stack "$stack" --write
+          muster versions promote --from "$from" --env "$env" --stack "$stack" --write
           promoted="$promoted $env:$stack"
         done
       done
     - !reference [.commit-versions, script]
     - |
       for cell in $promoted; do
-        muster deploy -e "${cell%%:*}" --stack "${cell#*:}" --yes
+        muster deploy --env "${cell%%:*}" --stack "${cell#*:}" --yes
       done
   resource_group: versions
   rules:

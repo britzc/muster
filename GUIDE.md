@@ -36,20 +36,20 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 |---|---|
 | Check the repository (CI does on every merge request) | `muster validate` |
 | See what there is | `muster list environments`, `muster list apps --stack hello` |
-| See what a stack deploys where | `muster releases -e qa --stack hello` |
-| See the values a release gets, and where each came from | `muster values web -e qa --stack hello` (`--explain` adds the chart's defaults) |
+| See what a stack deploys where | `muster releases --env qa --stack hello` |
+| See the values a release gets, and where each came from | `muster values --app web --env qa --stack hello` (`--explain` adds the chart's defaults) |
 | Compare two environments | `diff stacks/hello/qa.yaml stacks/hello/prod.yaml`, or diff two `muster values` |
-| See which versions run where | `muster versions -e prod --stack hello` |
-| Ship a version to an environment | `muster versions set web=1.2.0 -e qa --stack hello --write`, commit, `muster deploy web -e qa --stack hello --yes` |
-| Ship an init container's or a sidecar's version | `muster versions set web.sidecar=1.37.0 -e qa --stack hello --write` (`web=…` alone sets web's image named `app`) |
+| See which versions run where | `muster versions --env prod --stack hello` |
+| Ship a version to an environment | `muster versions set web=1.2.0 --env qa --stack hello --write`, commit, `muster deploy --app web --env qa --stack hello --yes` |
+| Ship an init container's or a sidecar's version | `muster versions set web.sidecar=1.37.0 --env qa --stack hello --write` (`web=…` alone sets web's image named `app`) |
 | Pin an image by digest | `muster versions set web=1.2.0@sha256:… …` |
-| Promote what qa runs to prod | `muster versions promote --from qa -e prod --stack hello --write`, commit, `muster deploy -e prod --stack hello --yes` |
-| Deploy a stack, or one app | `muster deploy -e qa --stack hello --yes`, `muster deploy web -e qa --stack hello --yes` |
-| Restart | `muster restart web -e qa --stack hello --yes` |
-| Roll back fast | `muster rollback web -e prod --stack hello --yes` (the cluster only: the next deploy brings the repository's version back) |
-| Roll back for good | `muster versions set web=<previous> -e prod --stack hello --write` (the previous version is in `git log -p stacks/hello/prod.versions.yaml`), or `git revert` the commit that changed it (a promote commit covers every production environment); commit, then `muster deploy -e prod --stack hello --yes` |
+| Promote what qa runs to prod | `muster versions promote --from qa --env prod --stack hello --write`, commit, `muster deploy --env prod --stack hello --yes` |
+| Deploy a stack, or one app | `muster deploy --env qa --stack hello --yes`, `muster deploy --app web --env qa --stack hello --yes` |
+| Restart | `muster restart --app web --env qa --stack hello --yes` |
+| Roll back fast | `muster rollback --app web --env prod --stack hello --yes` (the cluster only: the next deploy brings the repository's version back) |
+| Roll back for good | `muster versions set web=<previous> --env prod --stack hello --write` (the previous version is in `git log -p stacks/hello/prod.versions.yaml`), or `git revert` the commit that changed it (a promote commit covers every production environment); commit, then `muster deploy --env prod --stack hello --yes` |
 | Freeze an environment, a stack or an app | `disabled: true` and a `reason` in its file, committed ([README](README.md#disabling-an-environment-a-stack-or-an-app)) |
-| Tear down | `muster uninstall -e qa --stack hello --yes` (`--confirm prod` for production; databases are never removed) |
+| Tear down | `muster uninstall --env qa --stack hello --yes` (`--confirm prod` for production; databases are never removed) |
 
 Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm` or `kubectl` calls they would make: run them that way first.
 

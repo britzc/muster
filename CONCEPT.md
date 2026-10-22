@@ -112,7 +112,7 @@ values:
 - **Requirements between members wire themselves.** `payments` requires `sql` and `sanctions-api`; `orders-db` and `sanctions-gateway` provide them, so Muster connects them in whatever mode or provider each member has. Prod gets Postgres and the external sanctions gateway; QA gets MSSQL and the mock.
 - **Any database type per environment.** A database that belongs to the stack is a member without a chart. Each environment chooses the provider that fills it: Postgres in prod, MSSQL in QA. Settings that depend on the database (`database.dialect`) go in `values.<app>` in the same file that picks the provider.
 - **What's outside the stack is still a member.** If `payments` needs a database the stack doesn't deploy, such as a customer's shared server, it is added as a member and made external in each environment: `partner-db: { mode: external, provider: mssql, outputs: { host: …, secretName: … } }`. Every requirement then has one kind of source, a member.
-- **Release names are `<stack>-<app>`** by default, so the same app in two stacks never collides in one namespace.
+- **Release names are `<stack>-<app>`** by default, so the same app in two stacks never collides in one namespace. An environment can add a fixed prefix or suffix to every release name in it, like a Kustomize overlay's `namePrefix` and `nameSuffix`: `release: { suffix: -blue }` gives `<stack>-<app>-blue` (SCHEMA.md section 9).
 
 *(`apiVersion` lines are left out here; see `SCHEMA.md`.)*
 
@@ -154,7 +154,7 @@ outputs:
     url: https://ledger.internal.acme.example:8443
 ```
 
-- Muster never queries the cluster or a cloud API for outputs, which keeps the dry run repeatable and usable offline. The externals file is a public contract: any tool can write it. `validate` fails if an external member's outputs file is missing or doesn't contain the outputs its consumers need.
+- Muster never queries the cluster or a cloud API for outputs, which keeps the dry run repeatable and usable offline. The externals file is a public contract: any tool can write it. The file is optional: an external member's outputs can come from its provider and its member entry alone. `validate` fails if an external member gets no outputs from any of the three, or if they don't contain the outputs its consumers need.
 - Passwords never pass through Muster. Only secret *references* do (a chart-created secret, `existingSecret`, External Secrets, SOPS).
 - Database releases are **protected**: Muster never builds an uninstall for them, so its output can't remove them or their volumes (PVCs). Removing one is done by hand (see section 11). A member is protected when its app sets `protected: true`, as databases do.
 - One database release can serve several apps, through several consumers wiring to the same member.
@@ -180,7 +180,7 @@ Muster runs nothing unless told to. With `--yes`, `deploy`, `uninstall` and `rol
 
 | Caller | What Muster hands it |
 |---|---|
-| GitLab CI, Jenkins | `muster deploy -e qa --stack … --yes`: the same command as locally, one line per job. |
+| GitLab CI, Jenkins | `muster deploy --env qa --stack … --yes`: the same command as locally, one line per job. |
 | Local (minikube, kind, k3d) | The same command, run by you. |
 | kubectl | Plain manifests from `muster values … \| helm template …`, for `kubectl diff`, `kubectl apply --dry-run=server` or review. |
 
@@ -212,13 +212,13 @@ global: # charts/web/values.yaml (chart default)
 
 ## 7. Deployment scope
 
-Every command takes the same form, `muster <command> [app] -e <env> --stack <stack>`, and covers two kinds of deployment: a whole stack, or one app in a stack.
+Every command takes the same form, `muster <command> --env <env> --stack <stack> [--app <app>]`, and covers two kinds of deployment: a whole stack, or one app in a stack.
 
 ```bash
-muster releases -e local --stack customer-platform                  # a whole stack: releases and parameters, in order
-muster values   payments -e qa --stack customer-platform            # an app in a stack: the values for helm -f -
-muster values   payments -e qa --stack customer-platform --explain  # the same, as a dry run
-muster deploy   -e qa --stack customer-platform                     # the helm calls; --yes runs them
+muster releases --env local --stack customer-platform                      # a whole stack: releases and parameters, in order
+muster values --app payments --env qa --stack customer-platform            # an app in a stack: the values for helm -f -
+muster values --app payments --env qa --stack customer-platform --explain  # the same, as a dry run
+muster deploy --env qa --stack customer-platform                           # the helm calls; --yes runs them
 ```
 
 Each deployment has an explicit identity, **stack + application + environment**, so an app in two stacks becomes two independent releases (`<stack>-<app>`). `validate` rejects two releases with the same name in one namespace.
@@ -252,7 +252,7 @@ Every command selects from it the same way: a whole stack, or one app into one o
 
 **Output.** Everything goes to stdout, and the caller saves what it needs (in a pipeline, usually a temp folder). `muster releases --json` is data only and never contains a command.
 
-**Validation.** `muster validate` with no selection resolves the whole matrix: every hosted stack in every environment. It checks that every member resolves to one mode, that apps without a chart are never in plain `helm` mode, that every requirement is met by exactly one member, that external outputs files exist, and that release names don't collide. A change to an app's or an environment's values is checked against every cell it touches.
+**Validation.** `muster validate` with no selection resolves the whole matrix: every hosted stack in every environment. It checks that every member resolves to one mode, that apps without a chart are never in plain `helm` mode, that every requirement is met by exactly one member, that every output a consumer needs is there, including an external member's, and that release names don't collide. A change to an app's or an environment's values is checked against every cell it touches.
 
 ## 8. Image versions
 
@@ -267,8 +267,8 @@ Image versions change far more often than configuration, and shipping one should
 ## 9. Local development
 
 - `local` is just another environment, with the minikube context and minikube's values (e.g. `imagePullPolicy: IfNotPresent`).
-- `muster deploy -e local --stack <stack> --yes` deploys the full stack, including databases, from the same app definitions as production, with the same calls a pipeline runs.
-- Images need no registry: build them into the cluster (`minikube image build -t api:v2 src/api`), then `muster versions set api=v2 -e local --stack <stack> --write` and deploy.
+- `muster deploy --env local --stack <stack> --yes` deploys the full stack, including databases, from the same app definitions as production, with the same calls a pipeline runs.
+- Images need no registry: build them into the cluster (`minikube image build -t api:v2 src/api`), then `muster versions set api=v2 --env local --stack <stack> --write` and deploy.
 - Members that are `external` in production (e.g. services on EC2) are usually `mock` locally, so the whole stack runs on one machine.
 - `muster values … | helm template … | kubectl diff -f -` shows what a change would do to the running stack before deploying it.
 
@@ -285,7 +285,7 @@ Testing is layered: unit tests, a comparison of the values merge for every examp
 7. **Few concepts, strict validation.** Resist exceptions; if the model gets complicated, Muster has only moved the complexity.
 8. **The engine is a library.** The CLI is a thin layer over it, so a future controller or other integration can call the same Go packages.
 9. **Easy to adopt and to remove.** Muster can be adopted one app at a time and dropped without migrating anything: saved values files and the `helm` calls it printed keep working without it.
-10. **One simple command form.** `muster <command> [app] -e <env> --stack <stack>`, with the stack always named. Nothing is inferred that could change meaning when the repository grows.
+10. **One simple command form.** `muster <command> --env <env> --stack <stack> [--app <app>]`, flags only and in any order, with the stack always named. Nothing is inferred that could change meaning when the repository grows.
 
 ## 11. Safety model
 
@@ -315,8 +315,9 @@ The tool that acts owns the consequence, but Muster's output decides what that t
 |---|---|---|
 | Deletion by omission | A member disappears after a rename or bad merge, and a teardown or cleanup removes its release, database included | Environments can't omit members, so a cell only disappears when a stack's member list changes or a `stacks/<stack>/<env>.yaml` file is deleted. `commands uninstall` never builds a call for a protected release. |
 | Mode change | A member switches from `helm` to `external` or `mock`, and its real release is pruned | Modes are explicit in the stack's environment file, so the change is a visible line in review; `releases` shows every member's mode. (A classified diff for CI is on the roadmap.) |
+| Renamed releases | An environment's `release.prefix` or `release.suffix` changes, so every release in it gets a new name: the next deploy installs new releases beside the old ones, a database included | The setting is one visible line in the environment file, and `releases` shows the new names. Muster finds no old releases, since it never queries the cluster: uninstall them first, and move a protected release's data by hand |
 | Mock in production | A copy-paste puts `sanctions-mock` into a production environment | `validate` rejects `mock` mode in environments marked as production |
-| Stale external outputs | The externals file points at an old EC2 host after Ansible moved the service | The file is the contract: `validate` checks it exists and is complete, and `values --explain` shows it as the source. Keeping it current belongs to the pipeline that deploys the external member |
+| Stale external outputs | The externals file points at an old EC2 host after Ansible moved the service | The file is the contract: `validate` checks that the outputs consumers need are there, and `values --explain` shows it as the source. Keeping it current belongs to the pipeline that deploys the external member |
 | Wrong target | Commands run against whatever kube-context is active, possibly production | Every call names `--kube-context` and `--namespace` from the environment file, so nothing depends on the active context |
 | Accidental execution | A saved output or a shell-history line is replayed against an environment | `deploy`, `uninstall`, `restart` and `rollback` print unless given `--yes`, and an uninstall in a production environment also needs `--confirm <env>`. A protected release never gets an uninstall at all |
 | Empty values | `muster values … \| helm …` runs Helm with no values when Muster fails | `deploy --yes` resolves every release before it runs anything, and passes each release's values to helm itself |

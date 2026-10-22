@@ -11,7 +11,7 @@ Status: **draft v1alpha1**. This is the contract for Muster's files and rules: w
 - **Every Muster file starts with `apiVersion: muster/v1alpha1`.** Its kind comes from its name and place (`app.yaml`, `stack.yaml`, `<env>.yaml` …), so there is no `kind:` field.
 - **Unknown fields are errors.** A typo such as `memebers:` fails `validate` rather than being ignored.
 - **Values are plain Helm YAML.** Under a `values:` key, or in an app's `values.yaml`, they are exactly what Helm would take: no Muster keys, no placeholders, no includes. Muster merges the layers with Helm's own rules into one document per release and prints it (section 11).
-- **Names** of apps, stacks, environments, providers and types are DNS-1123 labels: lowercase letters, digits and `-`, starting with a letter, at most 40 characters. The release name `<stack>-<app>` must fit Helm's 53-character limit; `validate` checks it.
+- **Names** of apps, stacks, environments, providers and types are DNS-1123 labels: lowercase letters, digits and `-`, starting with a letter, at most 40 characters. The release name `<stack>-<app>`, with the environment's `release.prefix` and `release.suffix` if it sets them, must fit Helm's 53-character limit; `validate` checks it.
 - **Paths** are relative to the repository root and must stay inside it.
 - **Charts** are named in three ways, wherever a chart is named (an app's `chart`, a provider's, a mock member's):
 
@@ -278,6 +278,9 @@ versions:
 cluster:
   context: qa-cluster                 # --kube-context on every helm call: it picks the cluster
 namespace: "{stack}"                  # one namespace per stack, or a fixed name
+release:                              # optional: added to every release name in qa
+  prefix: ""
+  suffix: "-qa"                       # hello-web becomes hello-web-qa
 helm:
   wait: true
   timeout: 10m
@@ -298,6 +301,7 @@ values:                               # every release in qa
 | `versions.tags` | regular expression | any tag | The image tags the environment takes, matched in full, e.g. `'[0-9]+\.[0-9]+\.[0-9]+'` for release tags only. Checked for every image of an app's own chart, wherever its tag comes from: the versions file, a values file or the chart's default (V004) |
 | `cluster.context` | string | — | Required unless `gitops` is `true` |
 | `namespace` | string | — | May use `{stack}` and `{env}` |
+| `release.prefix` / `release.suffix` | string / string | `""` / `""` | Added to every release name in the environment, like a Kustomize overlay's `namePrefix` and `nameSuffix`: `<prefix><stack>-<app><suffix>`. Lowercase letters, digits and `-`; a prefix doesn't start with `-` and a suffix doesn't end with it (S002). `{release}` in outputs, and so the wiring, uses the full name. Changing either renames every release: the next deploy installs new releases beside the old ones, which Muster doesn't remove, so uninstall the old ones first, and move a protected release's data by hand (CONCEPT.md section 11) |
 | `helm.wait` / `helm.timeout` / `helm.createNamespace` | bool / duration / bool | `true` / `5m` / `false` | `--wait` and `--timeout` on every helm call; `--create-namespace` on deploys. With `wait`, `muster restart` waits for each restart with `kubectl rollout status --timeout` |
 
 ## 10. Externals and secrets
@@ -318,15 +322,15 @@ outputs:
     database: orders
 ```
 
-It's kept separate from `<env>.yaml` so machines write one file and people edit the other. Unknown member names are errors, and a missing output a consumer needs is caught by X005.
+It's kept separate from `<env>.yaml` so machines write one file and people edit the other. The file is optional: an external member whose outputs all come from its provider and member entry doesn't need it. Unknown member names are errors, and a missing output a consumer needs is caught by X005, as is an external member with no outputs from any source.
 
 ### `stacks/<stack>/<env>.versions.yaml`
 
 The image versions to deploy for a stack in one environment, and the versions of apps' charts that are in a registry. CI or a developer changes it with `muster versions`, never by hand:
 
 ```bash
-muster versions set payments=1.4.2 -e qa --stack customer-platform --write
-muster versions promote --from qa -e prod --stack customer-platform --write   # what qa runs, into prod
+muster versions set payments=1.4.2 --env qa --stack customer-platform --write
+muster versions promote --from qa --env prod --stack customer-platform --write # what qa runs, into prod
 ```
 
 ```yaml
@@ -362,7 +366,7 @@ Muster resolves one whole stack in one environment at a time, in one pass, alway
 
 1. **Load** the stack's Muster files: environment, stack, stack in environment, externals and versions.
 2. **Check** them (section 12, structure rules).
-3. **Resolve each member** in member order: its mode, chart and outputs (placeholders filled in: `{release}` is `<stack>-<app>`, `{namespace}` the environment's namespace for the stack), and which images it has.
+3. **Resolve each member** in member order: its mode, chart and outputs (placeholders filled in: `{release}` is `<prefix><stack>-<app><suffix>`, with the environment's `release.prefix` and `release.suffix`, `{namespace}` the environment's namespace for the stack), and which images it has.
 
    | `mode` (default `helm`) | Chart | Outputs, lowest → highest precedence |
    |---|---|---|
