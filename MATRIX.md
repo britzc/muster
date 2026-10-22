@@ -51,7 +51,7 @@ flowchart LR
         subgraph prod["stage: prod (manual)"]
             p1["deploy hello"]
         end
-        dev --> qa --> prod
+        d1 -- needs --> q1 -- needs --> p1
     end
 
     repo --> list --> gen --> pipeline
@@ -67,19 +67,24 @@ A hand-written list of environments and jobs drifts from what is deployed: someo
 
 ### Build once, promote the same thing
 
-An app's pipeline builds an image once and records its tag in a versions file per stack and environment. Every later environment gets that same tag, by promotion (`muster versions promote --from qa`), never by a rebuild. What reached production is what was tested, and each environment's versions file says exactly what runs there. An environment can refuse tags it shouldn't run, such as anything but release tags in production (`versions.tags`).
+An app's pipeline builds an image once and records its tag in the versions file of the first environment. Every later environment gets that same tag by promotion from the one before it (`muster versions promote --env qa`), never by a rebuild and never set directly. What reached production is what was tested, and each environment's versions file says exactly what runs there. An environment can refuse tags it shouldn't run, such as anything but release tags in production (`versions.tags`).
 
-### Test environments first, production on purpose
+### Each environment after the one before, production on purpose
 
-Environments have a deploy order: those with `production: false` first, then the production ones. A matrix deploys in that order, one pipeline stage per environment, so a change has passed through every test environment before it can reach production. Production jobs wait for a person by default, and only the main branch can reach production at all. A branch pipeline offers only test environments.
+Environments form a chain: each names the one it promotes from (`promotion.from`), such as dev, then qa from dev, then prod from qa. The chain is the deploy order, and it is enforced twice:
+
+- **Versions:** an environment takes versions only by promotion from the one before it, so a version can't skip an environment, from any pipeline or laptop.
+- **Deploys:** in a generated pipeline, each deploy job needs the same stack's job in the environment before, so a stack that fails in qa never starts in prod.
+
+Production jobs wait for a person by default (`promotion.manual`), and only the main branch can reach production at all. A branch pipeline offers only test environments.
 
 ### Small, independent units
 
 A cell is small enough to reason about and independent of the cells in other environments, so:
 
-- **Environments deploy in parallel.** Cells in different environments share nothing, so their jobs can run at the same time.
+- **Stacks don't wait for each other.** A stack's job in qa waits only for that stack's job in dev, so one stack failing holds up only that stack, and different stacks move along the chain at their own pace.
 - **Within an environment, one thing at a time.** A queue per environment (a GitLab `resource_group`) runs two jobs in the same environment one after the other, never at once. Inside a stack, members deploy in the stack's order.
-- **A failure stays where it happened.** A failed cell stops its own job, not the matrix. The pipeline shows which cells succeeded, and a retry reruns only the failed one.
+- **A failure stops only what comes after it.** A failed cell stops its own job and that stack's jobs in later environments, not the rest of the matrix. The pipeline shows which cells succeeded, and a retry reruns only the failed one.
 
 ### Every change checked against everything it touches
 
@@ -113,19 +118,22 @@ flowchart LR
     end
     subgraph build["A new build of an app"]
         direction LR
-        img["app pipeline<br/>builds the image once"] -->|tag| ship["ship<br/>versions set where the app<br/>takes versions, commit"]
+        img["app pipeline<br/>builds the image once"] -->|tag| ship["ship<br/>versions set in dev, deploy,<br/>commit once it passed"]
     end
-    main --> testenv["test environments<br/>dev, then qa:<br/>deployed right away"]
-    ship --> testenv
-    main --> prodjobs["production<br/>a manual job per stack from main,<br/>or deployed by promote"]
-    testenv -. "a person starts it" .-> promote["promote<br/>the same tags from qa,<br/>checked against prod's tag policy,<br/>commit"]
-    promote --> prodjobs
+    main --> dev["dev<br/>deployed right away"]
+    dev -- needs --> qa["qa<br/>deployed right away"]
+    qa -- needs --> prodjobs["prod<br/>a manual job per stack"]
+    ship --> dev
+    ship -. "promote from dev, deploy,<br/>commit once it passed" .-> qa
+    ship -. "a person starts it:<br/>promote from qa,<br/>checked against prod's tag policy" .-> prodjobs
 ```
 
 1. **Check:** every merge request and every commit on main runs `muster validate` and prints every deploy, so a change that breaks any cell fails before it merges.
-2. **Deploy from main:** main deploys every stack, a stage per environment in deploy order: the test environments right away, production as manual jobs.
-3. **Ship:** an app's pipeline triggers `ship` with the new tag. It records the tag in every test environment where the app takes versions, commits it, and deploys the app there.
-4. **Promote:** when a person starts it, promote copies the versions of the last test environment into each production environment, checks them against production's tag policy, commits, and deploys.
+2. **Deploy from main:** main deploys every stack, a stage per environment in deploy order, each stack's job after its job in the environment before: the test environments right away, production as manual jobs.
+3. **Ship:** an app's pipeline triggers a ship with the new tag. It sets the tag where the chain starts (dev) and deploys the app; only when that passes does it commit. Then each environment in turn promotes from the one before, deploys and commits, until a manual one (prod), which waits for a person. A deploy that fails commits nothing, so the environment's versions file keeps what last passed, and nothing after it starts.
+4. **Promote:** a person, or a schedule (nightly into qa, say), promotes along the chain without a new build: each environment copies what passed in the one before, prod checks it against its tag policy, and each commits once its deploy passed.
+
+Because a versions file is committed only after its deploy passed, a version in an environment's file means it passed there. Whatever starts a promotion, automatically, by hand or on a schedule, it copies only what passed.
 
 ## Push, not reconcile
 

@@ -1,5 +1,7 @@
 # qa: where it deploys, and values every release in qa gets.
 apiVersion: muster/v1alpha1
+promotion:
+  from: dev                   # qa takes only what passed in dev
 cluster:
   context: minikube           # point this at your qa cluster's kube context
 namespace: "{stack}-{env}"

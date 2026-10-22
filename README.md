@@ -52,10 +52,10 @@ qa           no        -
 prod         no        -
 
 $ muster releases --env dev --stack hello
-STACK  ORDER  APP      RELEASE        MODE  CHART           NAMESPACE  CONTEXT   PROTECTED  SECRETS  DISABLED  REASON
-hello  1      mongodb  hello-mongodb  helm  charts/mongodb  hello-dev  minikube  no         -        yes       mongodb is disabled in dev: Not used yet; web gets a database in 1.2.0 (HELLO-12)
-hello  2      web      hello-web      helm  charts/web      hello-dev  minikube  no         -        no        -
-hello  3      nginx    hello-nginx    helm  charts/nginx    hello-dev  minikube  no         -        no        -
+STACK  ORDER  APP      RELEASE        MODE  CHART           NAMESPACE  CONTEXT   PROTECTED  SECRETS                            DISABLED  REASON
+hello  1      mongodb  hello-mongodb  helm  charts/mongodb  hello-dev  minikube  no         -                                  yes       mongodb is disabled in dev: Not used yet; web gets a database in 1.2.0 (HELLO-12)
+hello  2      web      hello-web      helm  charts/web      hello-dev  minikube  no         stacks/hello/dev.web.secrets.yaml  no        -
+hello  3      nginx    hello-nginx    helm  charts/nginx    hello-dev  minikube  no         -                                  no        -
 ```
 
 **Every image's version is captured per environment**, in `stacks/hello/<env>.versions.yaml`, mongodb's too. web's pod also runs an init container and a sidecar, each with its own version:
@@ -117,7 +117,7 @@ $ diff <(muster values --app web --env qa --stack hello) <(muster values --app w
 $ muster deploy --env qa --stack hello
 muster: printing only; add --yes to run
 # skip hello-mongodb: mongodb is disabled in qa: Not used yet; web gets a database in 1.2.0 (HELLO-12)
-helm upgrade --install hello-web charts/web --kube-context minikube --namespace hello-qa --wait --timeout 3m --create-namespace -f -
+helm upgrade --install hello-web charts/web --kube-context minikube --namespace hello-qa --wait --timeout 3m --create-namespace -f - -f secrets://stacks/hello/qa.web.secrets.yaml
 helm upgrade --install hello-nginx charts/nginx --kube-context minikube --namespace hello-qa --wait --timeout 3m --create-namespace -f -
 ```
 
@@ -140,19 +140,25 @@ X-Served-By: nginx/1.27.3
 
 web shows the last four characters of its key only, so you can see that qa got qa's.
 
-**Ship and promote a version.** Each environment says which tags it takes; prod takes release tags only:
+**Ship and promote a version.** A version starts in dev and moves on by promotion: qa takes only what dev runs, and prod only what qa runs (`promotion.from` in their environment files). dev already runs web 1.1.0, which qa can't be given directly:
 
 ```console
-$ muster versions set web=1.1.0 nginx=1.27.4-alpine --env qa --stack hello --write
+$ muster versions set web=1.1.0 --env qa --stack hello
+muster: V008: qa takes web's versions only from dev (promotion.from in environments/qa.yaml); promote them: muster versions promote --env qa --stack hello
+
+$ muster versions promote --env qa --stack hello --write     # what dev runs, into qa
+muster: warning D001: mongodb is disabled in qa: Not used yet; web gets a database in 1.2.0 (HELLO-12); its version is kept
 muster: wrote stacks/hello/qa.versions.yaml
 $ muster deploy --env qa --stack hello --yes
 
-$ muster versions set web=feature-x --env prod --stack hello
-muster: error V004: stacks/hello/prod.versions.yaml: versions.web.app: tag "feature-x" is not accepted in prod; its tags match [0-9]+\.[0-9]+\.[0-9]+(-alpine)? (versions.tags in environments/prod.yaml)
-
-$ muster versions promote --from qa --env prod --stack hello --write
-muster: wrote stacks/hello/prod.versions.yaml
+$ muster versions promote --env prod --stack hello --write   # what qa runs, into prod
 $ muster deploy --env prod --stack hello --yes
+```
+
+Each environment also says which tags it takes, and prod takes release tags only. Had a feature build reached qa, promoting it would stop there:
+
+```console
+muster: error V004: stacks/hello/prod.versions.yaml: versions.web.app: tag "feature-x" is not accepted in prod; its tags match [0-9]+\.[0-9]+\.[0-9]+(-alpine)? (versions.tags in environments/prod.yaml)
 ```
 
 **Tear down.** prod is a production environment, so it also needs `--confirm prod`:
@@ -176,7 +182,7 @@ A matrix deployment covers several environments, stacks and apps at once. Its ce
 | Every app in one environment | `list apps --env <env> --mode helm,mock` | `muster deploy --app <app> --env <env> --all-stacks` |
 | Every app everywhere | `list environments` × `list apps --env <env> --mode helm,mock` | `muster deploy --app <app> --env <env> --all-stacks` |
 
-`--mode helm,mock` leaves out external members, which have nothing to deploy. An app deploy with `--all-stacks` covers every stack in the environment that has the app, since an environment can host several. Rows come in deploy order, so a loop deploys test environments before production:
+`--mode helm,mock` leaves out external members, which have nothing to deploy. An app deploy with `--all-stacks` covers every stack in the environment that has the app, since an environment can host several. Rows come in deploy order, each environment after the one it promotes from, so a loop deploys dev, then qa, then prod:
 
 ```sh
 for env in $(muster list environments --stack hello --names); do
@@ -184,7 +190,7 @@ for env in $(muster list environments --stack hello --names); do
 done
 ```
 
-Cells in different environments are independent and can run at the same time; within one environment, deploy one stack at a time (a stack's members already go in order). `muster generate gitlab-ci` turns a matrix into a GitLab child pipeline with a job per cell, which the [GitLab pipeline](#gitlab-ci) runs:
+A stack deploys in an environment only after it deployed in the environment before; within one environment, deploy one stack at a time (a stack's members already go in order). Stacks don't wait for each other. `muster generate gitlab-ci` turns a matrix into a GitLab child pipeline with a job per cell, which the [GitLab pipeline](#gitlab-ci) runs. Each deploy job `needs` the same stack's job in the environment before, so a failed deploy in qa stops prod:
 
 ```console
 $ muster generate gitlab-ci --auto                 # every stack everywhere; production jobs manual
@@ -196,12 +202,22 @@ deploy hello in dev:
   when: on_success
   script:
     - muster deploy --env dev --stack hello --yes
+deploy hello in qa:
+  stage: qa
+  environment: qa
+  resource_group: qa
+  when: on_success
+  needs: [deploy hello in dev]
+  script:
+    - muster deploy --env qa --stack hello --yes
 …
-$ muster generate gitlab-ci --by app --app web --tag 1.2.0 --production=false  # a test build of web, where it runs
+$ muster generate gitlab-ci --by app --app web --tag 1.2.0 --production=false  # a test build of web, in dev
+$ muster generate gitlab-ci --by app --app web --tag 1.2.0 --auto --commit ci/versions.sh  # ship web along the chain
+$ muster generate gitlab-ci --action promote --commit ci/versions.sh             # promote every stack along the chain
 $ muster generate gitlab-ci --action restart --skip local                      # restart every stack, but on a laptop
 ```
 
-`--by stack` (the default) gives a job per stack an environment hosts, `--by app` one per app it deploys, and an app named one stage with a job per environment. What is disabled gets no job, an app only gets one where it runs a chart or a mock, and an uninstall from production carries `--confirm`. `muster generate gitlab-ci --help` has every flag. [MATRIX.md](MATRIX.md) explains the continuous delivery principles behind matrix deployments.
+`--by stack` (the default) gives a job per stack an environment hosts, `--by app` one per app it deploys, and an app named one stage with a job per environment. What is disabled gets no job, an app only gets one where it runs a chart or a mock, and an uninstall from production carries `--confirm`. `--auto` starts the jobs of every environment that isn't manual (`promotion.manual`, by default production); a manual job that a later one needs gets `allow_failure: false`, so the later one waits for it. `--tag` and `--chart` ship a version of the named app: with `--commit <script>`, set where the chain starts and promoted from each environment to the next, each job committing once its deploy passed; without it, only where the chain starts and not committed, for testing a build. `--action promote` promotes each environment from the one before, then deploys. `muster generate gitlab-ci --help` has every flag. [MATRIX.md](MATRIX.md) explains the continuous delivery principles behind matrix deployments.
 
 ## Disabling an environment, a stack or an app
 
@@ -238,29 +254,30 @@ In the hello example, `mongodb` is disabled in every environment: it is part of 
 - **Secrets:** the age key that decrypts the SOPS files, as a GitLab CI/CD variable `SOPS_AGE_KEY_FILE` of type File. It takes precedence over the example's `SOPS_AGE_KEY_FILE`, which points at the demo key.
 - **Charts in a registry:** helm needs to be logged in to the registry before a deploy. That is the pipeline's job, done however your platform logs in to it; Muster only names the chart, and depends on nothing but helm. See [Charts in a registry](#charts-in-a-registry).
 - **Cluster access:** the job's kubeconfig, from the GitLab agent for Kubernetes (set `cluster.context` to the agent's context, e.g. `platform/agents:qa`) or a `KUBECONFIG` file variable. Muster only names the context.
-- **Writing versions back:** a project access token with `write_repository`, in the masked variable `DEPLOY_TOKEN`. `ship` and `promote` start from the latest main, take in anything merged while they run before pushing, and take turns (`resource_group: versions`), so they never push over each other.
+- **Writing versions back:** a project access token with `write_repository`, in the masked variable `DEPLOY_TOKEN`. The jobs that change versions run [`ci/versions.sh`](examples/hello/ci/versions.sh): `pull` to start from the latest main, and `push`, once the deploy has passed, to commit, take in anything merged meanwhile and push. Muster never runs git; `muster generate gitlab-ci --commit <script>` only names the script in each job.
 - **Environments CI can't reach:** list them in the variable `SKIP_ENVIRONMENTS`, e.g. a `local` environment on a laptop.
 
 | Job | When | What it does |
 |---|---|---|
 | `check` | every merge request and main | `muster validate`, then every stack's deploy in every environment, printed only |
-| `plan`, `matrix` | main | Deploys every stack: the non-production environments right away, production as manual jobs |
-| `plan`, `matrix` | Run pipeline | Deploys or uninstalls what the inputs choose, as manual jobs (below) |
-| `ship` | triggered by an app's pipeline with `APP`, and `TAG` (optionally with `DIGEST`), `CHART` (the version of its chart in a registry) or both | `muster versions set` in every non-production stack where the app takes versions (`list --versioned`), commit and push (`[skip ci]`), deploy the app there |
-| `promote` | main, manual | Copies into each production environment, stack by stack, the versions of the last non-production environment before it; commits, pushes and deploys. A tag production doesn't take stops it |
+| `plan`, `matrix` | main | Deploys every stack along the chain: each stack in an environment after it deployed in the one before; dev and qa right away, prod as manual jobs |
+| `plan`, `matrix` | Run pipeline | What the inputs choose, as manual jobs (below) |
+| `plan`, `matrix` | triggered by an app's pipeline with `APP`, and `TAG` (optionally with `DIGEST`), `CHART` (the version of its chart in a registry) or both | Ships it: `versions set` in dev, deploy, commit and push (`[skip ci]`); then promote to qa, deploy, commit; prod waits for a person. A deploy that fails commits nothing and stops what comes after it |
+| `plan`, `matrix` | a pipeline schedule that sets the `action` input to `promote` | Promotes along the chain on a schedule, e.g. nightly into qa: each environment's jobs start themselves unless it is manual |
 
 **Only main deploys to every environment.** A pipeline run by hand from another branch offers only the non-production environments (`muster list environments --production=false`), for testing a branch. Protect the production environments in GitLab to enforce it there too; with required approvals, their jobs wait for an approver.
 
-**Run pipeline** asks for an `action` (deploy, uninstall, restart or rollback), whether to act on a `stack` or an `app`, and for an app optionally its name and a `version`:
+**Run pipeline** asks for an `action` (deploy, uninstall, restart, rollback or promote), whether to act on a `stack` or an `app`, and for an app optionally its name and a `version`:
 
 | Choice | Child pipeline |
 |---|---|
 | `stack` | A stage per environment, a job per stack it hosts: `muster <action> --env <env> --stack <stack> --yes` |
 | `app`, no name | A stage per environment, a job per app it deploys: `muster <action> --app <app> --env <env> --all-stacks --yes` |
 | `app` with a name | One stage, a job per environment that deploys the app |
-| `app` with a name and a `version` (deploy only) | The same, each job first running `muster versions set <app>=<version> … --write` (the app's image named `app` when it has several) where the app runs its own chart. The change stays in the job and is not committed: for testing a build |
+| `app` with a name and a `version` (deploy only) | A job in dev, where the chain starts, first running `muster versions set <app>=<version> … --write` (the app's image named `app` when it has several). The change stays in the job and is not committed: for testing a build |
+| `promote` | A job per stack (or app) in every environment with `promotion.from`, each after the one before: `muster versions promote`, deploy, commit once it passed |
 
-An app only gets a job where it is a chart or a mock (`--mode helm,mock`), so no job does nothing. Start one job, several, or a whole stage with Run all manual. Jobs for different environments run at the same time; a `resource_group` per environment queues two jobs in the same one. Uninstalling from a production environment adds `--confirm <env>`: starting the job is the confirmation. Without a `version`, a job deploys the versions the repository records.
+An app only gets a job where it is a chart or a mock (`--mode helm,mock`), so no job does nothing. Start one job, several, or a whole stage with Run all manual. A deploy job waits for the same stack's (or app's) job in the environment before, and a `resource_group` per environment queues two jobs in the same one. Uninstalling from a production environment adds `--confirm <env>`: starting the job is the confirmation. Without a `version`, a job deploys the versions the repository records.
 
 ## Repository layout
 
@@ -361,7 +378,7 @@ muster list environments --production=false        # the test environments: dev 
 | `list stacks` | `--app <app>`, `--env <env>`, `--mode <mode>`, `--versioned` |
 | `list apps` | `--env <env>`, `--stack <stack>`, `--mode <mode>`, `--versioned` |
 
-Each also takes `--names` or `--json`. The filters combine, and each narrows to where an environment hosts a stack that has the app. `--stack` repeats; `--mode` (helm, mock or external, the mode `releases` shows) repeats or takes a comma-separated list. A name that doesn't exist is an error, not an empty list. `list` reads only the stack files, so a stack with errors elsewhere in the repository never stops it (`validate` reports those). Environments come in deploy order: those with `production: false` first, then the production ones, each by name. Apps of one stack come in member order; otherwise names are sorted. A name is disabled only when it is disabled everywhere the filters select: a stack with one disabled member is not.
+Each also takes `--names` or `--json`. The filters combine, and each narrows to where an environment hosts a stack that has the app. `--stack` repeats; `--mode` (helm, mock or external, the mode `releases` shows) repeats or takes a comma-separated list. A name that doesn't exist is an error, not an empty list. `list` reads only the stack files, so a stack with errors elsewhere in the repository never stops it (`validate` reports those). Environments come in deploy order: each after the environment it promotes from (`promotion.from`), and otherwise those with `production: false` first, then the production ones, each by name. Apps of one stack come in member order; otherwise names are sorted. A name is disabled only when it is disabled everywhere the filters select: a stack with one disabled member is not.
 
 `--mode helm` includes apps whose chart comes from a provider (a database, say). `--versioned` narrows to where the app takes image versions: it runs its own chart and names images in `app.yaml`, so `versions set` can change it there.
 
@@ -421,10 +438,10 @@ muster: printing only; add --yes to run
 helm rollback hello-web 3 --kube-context minikube --namespace hello-prod --wait --timeout 3m
 ```
 
-A rollback changes the cluster only. The repository still records the newer version and values, so the next deploy brings them back. It's the quick fix; to keep it, set the version it went back to and commit, as for any other version ([`versions`](#versions)):
+A rollback changes the cluster only. The repository still records the newer version and values, so the next deploy brings them back. It's the quick fix. To keep it, `git revert` the commit that changed the versions file, or ship the version it went back to like any other, from the start of the chain ([`versions`](#versions)):
 
 ```bash
-muster versions set web=1.0.0 --env prod --stack hello --write
+muster versions set web=1.0.0 --env dev --stack hello --write   # then promote it through qa to prod
 ```
 
 **Check one release** with helm directly; `muster releases --app <app> … --json` gives the release, namespace and kube context:
@@ -439,8 +456,9 @@ helm history hello-web --namespace hello-qa --kube-context minikube
 Image versions live in `stacks/<stack>/<env>.versions.yaml`, apart from the values ([why](CONCEPT.md#8-image-versions)). `muster versions` changes the file; nobody edits it by hand:
 
 ```bash
-muster versions set web=1.1.0 nginx=1.27.4-alpine --env qa --stack hello --write  # ship to qa
-muster versions promote --from qa --env prod --stack hello --write                # what qa runs, into prod
+muster versions set web=1.2.0 nginx=1.27.4-alpine --env dev --stack hello --write  # ship to dev
+muster versions promote --env qa --stack hello --write                             # what dev runs, into qa
+muster versions promote --env prod --stack hello --write                           # what qa runs, into prod
 ```
 
 ```console
@@ -462,8 +480,9 @@ hello  nginx    app      1.27.3-alpine  stacks/hello/prod.versions.yaml  no     
   ```
   Each is versioned, promoted and tag-checked on its own: `set web.sidecar=1.37.0`. `set web=1.2.0` sets the image named `app` (the only image, when there is one). An app that names none takes no versions. The chart must take each tag at a map path (`sidecar.image.tag`), not inside a list (`initContainers[0].image`).
 - **A version is a tag**, such as `1.4.2`, optionally with a digest that is passed on unchecked: `1.4.2@sha256:…`.
+- **Versions move along the chain.** An environment with [`promotion.from`](SCHEMA.md#9-environment-environmentsenvyaml) takes them only by `promote` from that environment, which `--from` defaults to; `set` there is refused (V008), and so is `promote --from` any other environment. So a version reaches prod only after it ran in qa, and qa only after dev. `set` works where the chain starts, and for an app the environment before doesn't run as its own chart (a mock in qa, say), which `validate` warns about (P004).
 - **Each environment says which tags it takes** ([`versions.tags`](SCHEMA.md#9-environment-environmentsenvyaml), e.g. release tags only in prod). `set` and `promote` refuse a tag the environment doesn't take, and `validate`, `values` and `deploy` refuse one from anywhere, so a feature build can go to qa but never to prod, whichever pipeline or laptop tries.
-- **Commit the file.** Every later deploy uses it until it changes, so without a commit the next pipeline deploys the old version. Muster never commits; the [`ship` and `promote` jobs](#gitlab-ci) do it in CI.
+- **Commit the file once its deploy passed.** Every later deploy uses it until it changes, so without a commit the next pipeline deploys the old version. Committing only after the deploy passed means a version in an environment's file has passed there, so the next environment promotes only what passed. Muster never commits; the [ship and promote jobs](#gitlab-ci) do it in CI.
 - **Without `--write`**, `set` and `promote` print the new file, to review first.
 
 The file's rules (fallback to values, which apps take versions, what is checked) are in [SCHEMA.md §10](SCHEMA.md#stacksstackenvversionsyaml).
@@ -484,10 +503,10 @@ chartVersion: 15.5.0
 An app's own chart moves through the environments like its image: its version is in each versions file, as `web.chart`:
 
 ```console
-$ muster versions set web=1.1.0 web.chart=1.4.0 --env qa --stack hello --write
-$ muster deploy --app web --env qa --stack hello
+$ muster versions set web=1.1.0 web.chart=1.4.0 --env dev --stack hello --write
+$ muster deploy --app web --env dev --stack hello
 helm upgrade --install hello-web oci://123456789012.dkr.ecr.eu-west-1.amazonaws.com/charts/web --version 1.4.0 --kube-context … -f -
-$ muster versions promote --from qa --env prod --stack hello --write   # the image and the chart
+$ muster versions promote --env qa --stack hello --write   # the image and the chart
 ```
 
 - **Exact versions only** (`1.4.0`, `1.5.0-rc.1`), no ranges, so the same files always deploy the same chart. `versions.tags` checks image tags, not chart versions.
@@ -523,6 +542,6 @@ The chart turns `apiKey` into a Kubernetes Secret; the value never appears in Mu
 
 | Folder | Shows |
 |---|---|
-| [examples/basic](examples/basic) | The smallest useful repository, and the one to copy: two apps (backend and frontend) in one stack, `shop`, in dev and qa, with each app's values, each environment's values and image versions. No providers, mocks, external members, wiring or secrets: add those only when a stack needs them ([GUIDE.md](GUIDE.md#start-small)) |
+| [examples/basic](examples/basic) | The smallest useful repository, and the one to copy: two apps (backend and frontend) in one stack, `shop`, in dev and qa (qa promoting from dev), with each app's values, each environment's values and image versions. No providers, mocks, external members, wiring or secrets: add those only when a stack needs them ([GUIDE.md](GUIDE.md#start-small)) |
 | [examples/hello](examples/hello) | A hello world web app with nginx in front of it and a disabled mongodb, one stack in dev, qa and prod, every app's version captured per environment, an API key per environment in SOPS, and a [GitLab pipeline](#gitlab-ci) for matrix deployments |
 

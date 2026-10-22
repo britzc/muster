@@ -16,10 +16,11 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Everything about a stack in one environment: replicas, hosts, resources | `stacks/<stack>/<env>.yaml` |
 | What every release in an environment gets: ingress class, storage, pull policy | `environments/<env>.yaml` |
 | Which version an environment runs | `stacks/<stack>/<env>.versions.yaml`, only with `muster versions` |
+| The order of environments, and where each takes versions from | `promotion.from` in `environments/<env>.yaml` |
 
 ## Start small
 
-[examples/basic](examples/basic) is all most repositories need: apps with their charts and values, a stack, its environments, and image versions. Add the rest only when a stack needs it:
+[examples/basic](examples/basic) is all most repositories need: apps with their charts and values, a stack, its environments in order (qa promotes from dev), and image versions. Add the rest only when a stack needs it:
 
 | When | Add | See |
 |---|---|---|
@@ -40,14 +41,15 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | See the values a release gets, and where each came from | `muster values --app web --env qa --stack hello` (`--explain` adds the chart's defaults) |
 | Compare two environments | `diff stacks/hello/qa.yaml stacks/hello/prod.yaml`, or diff two `muster values` |
 | See which versions run where | `muster versions --env prod --stack hello` |
-| Ship a version to an environment | `muster versions set web=1.2.0 --env qa --stack hello --write`, commit, `muster deploy --app web --env qa --stack hello --yes` |
-| Ship an init container's or a sidecar's version | `muster versions set web.sidecar=1.37.0 --env qa --stack hello --write` (`web=…` alone sets web's image named `app`) |
+| Ship a version | `muster versions set web=1.2.0 --env dev --stack hello --write`, `muster deploy --app web --env dev --stack hello --yes`, and commit once it passes. Only the first environment of the chain takes `set` |
+| Ship an init container's or a sidecar's version | `muster versions set web.sidecar=1.37.0 --env dev --stack hello --write` (`web=…` alone sets web's image named `app`) |
 | Pin an image by digest | `muster versions set web=1.2.0@sha256:… …` |
-| Promote what qa runs to prod | `muster versions promote --from qa --env prod --stack hello --write`, commit, `muster deploy --env prod --stack hello --yes` |
+| Promote to the next environment | `muster versions promote --env qa --stack hello --write` (from dev, qa's `promotion.from`), `muster deploy --env qa --stack hello --yes`, and commit once it passes; then the same for prod, from qa |
+| Put environments in order | `promotion: { from: qa }` in `environments/prod.yaml`: prod deploys after qa and takes versions only from it. `promotion.manual` says whether a person starts its jobs (default: `production`) |
 | Deploy a stack, or one app | `muster deploy --env qa --stack hello --yes`, `muster deploy --app web --env qa --stack hello --yes` |
 | Restart | `muster restart --app web --env qa --stack hello --yes` |
 | Roll back fast | `muster rollback --app web --env prod --stack hello --yes` (the cluster only: the next deploy brings the repository's version back) |
-| Roll back for good | `muster versions set web=<previous> --env prod --stack hello --write` (the previous version is in `git log -p stacks/hello/prod.versions.yaml`), or `git revert` the commit that changed it (a promote commit covers every production environment); commit, then `muster deploy --env prod --stack hello --yes` |
+| Roll back for good | `git revert` the commit that changed `stacks/hello/prod.versions.yaml` (`git log -p` shows it), then `muster deploy --env prod --stack hello --yes`; or ship the previous version from the start of the chain |
 | Freeze an environment, a stack or an app | `disabled: true` and a `reason` in its file, committed ([README](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | Tear down | `muster uninstall --env qa --stack hello --yes` (`--confirm prod` for production; databases are never removed) |
 
@@ -59,7 +61,7 @@ Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm
 |---|---|---|
 | An app | `charts/<app>/` (or `chart: oci://…`), `apps/<app>/app.yaml`, `apps/<app>/values.yaml` | List it in a stack's `stack.yaml` |
 | A stack | `stacks/<stack>/stack.yaml` with its members in deploy order | Host it in an environment |
-| An environment | `environments/<env>.yaml`: kube context, namespace, values | `stacks/<stack>/<env>.yaml` for each stack it hosts, and `muster versions set … --write` for its versions |
+| An environment | `environments/<env>.yaml`: kube context, namespace, values | `stacks/<stack>/<env>.yaml` for each stack it hosts, `promotion.from` for where it sits in the chain, and its versions by `muster versions promote` (or `set`, if it is first) |
 
 `muster validate` says what is missing. The GitLab pipeline picks up new environments, stacks and apps by itself ([README](README.md#gitlab-ci)).
 

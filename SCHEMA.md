@@ -273,6 +273,9 @@ Only what every stack in the environment shares: where it is and how it's deploy
 apiVersion: muster/v1alpha1
 gitops: false                         # true: a GitOps controller owns the releases
 production: false
+promotion:
+  from: dev                           # qa deploys after dev, and takes versions only from it
+  manual: false                       # its pipeline jobs start themselves (default: production)
 versions:
   tags: '.+'                          # the image tags it takes, matched in full
 cluster:
@@ -297,6 +300,8 @@ values:                               # every release in qa
 | `values` | values | — | Every release in the environment gets them, mocks and provider charts included: platform settings such as the ingress class, storage class or image pull policy. Keep them under `global:`, which every chart accepts |
 | `gitops` | bool | `false` | A GitOps controller owns the releases: `muster deploy`, `uninstall`, `restart` and `rollback` make no call for them, and `releases` reports `gitops: true` so other callers skip them too |
 | `production` | bool | `false` | `mock` members are an error when `true`; `muster uninstall --yes` also needs `--confirm <env>` |
+| `promotion.from` | environment name | — | The environment before this one: the start of a chain when left out. This one comes after it in deploy order, a generated pipeline's deploy job here needs the same stack's job there, and versions reach this one only by `versions promote` from it (V008). It hosts every stack this one hosts (P003, a warning) and runs as its own chart every app this one takes versions for (P004, a warning); an app it doesn't is set here directly. No loops (P002). Typically dev, then qa from dev, then prod from qa; two environments may promote from the same one |
+| `promotion.manual` | bool | `production` | A person starts each of the environment's jobs in a generated pipeline, even with `--auto` |
 | `disabled` / `reason` | bool / string | `false` | `disabled: true` turns the whole environment off for changes; `reason` says why, and is required with it ([Disabling](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | `versions.tags` | regular expression | any tag | The image tags the environment takes, matched in full, e.g. `'[0-9]+\.[0-9]+\.[0-9]+'` for release tags only. Checked for every image of an app's own chart, wherever its tag comes from: the versions file, a values file or the chart's default (V004) |
 | `cluster.context` | string | — | Required unless `gitops` is `true` |
@@ -329,8 +334,8 @@ It's kept separate from `<env>.yaml` so machines write one file and people edit 
 The image versions to deploy for a stack in one environment, and the versions of apps' charts that are in a registry. CI or a developer changes it with `muster versions`, never by hand:
 
 ```bash
-muster versions set payments=1.4.2 --env qa --stack customer-platform --write
-muster versions promote --from qa --env prod --stack customer-platform --write # what qa runs, into prod
+muster versions set payments=1.4.2 --env qa --stack customer-platform --write # qa starts the chain
+muster versions promote --env prod --stack customer-platform --write          # what qa runs, into prod (promotion.from: qa)
 ```
 
 ```yaml
@@ -350,6 +355,7 @@ versions:
 - **It persists.** Every later deploy of the stack in that environment uses it, until it is changed. Commit it, so the next pipeline deploys what the last one did. Git records who changed it and when, so the file holds only versions: writing the same versions again leaves it unchanged.
 - **`chart` is the version of the app's chart, when it is in a registry** (section 1), set with `versions set payments.chart=1.4.0` and copied by `promote` like a tag. Such an app needs it in every environment that hosts it (V006); an app whose chart is in `charts/` has none. It is an exact chart version, and `versions.tags` doesn't apply to it.
 - **It only applies to an app running its own chart** that names `images` or whose chart is in a registry: never to a mock or to a provider's chart filling a slot. `muster list … --versioned` gives where that holds.
+- **It moves along the chain** (§9, `promotion.from`). In an environment with `promotion.from`, `set` is refused for every app that environment runs as its own chart, and `promote` copies from it alone, which `--from` defaults to (V008). Without `promotion.from`, `promote` needs `--from`.
 - `set` and `promote` print the new file; with `--write` they replace it atomically.
 
 ### `stacks/<stack>/<env>.<app>.secrets.yaml`
@@ -446,6 +452,17 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 | V005 | Warning: the environment's `values` or the stack's `values.<app>` for the same environment also set an image's tag path. The versions file wins, so remove one. A tag in `apps/<app>/values.yaml` is the fallback and is not reported |
 | V006 | An app whose own chart is in a registry has `<app>.chart` in the versions file of every environment that hosts it, an exact chart version; an app whose chart is in `charts/` has none |
 | V007 | Each image of an app whose chart is in a registry gets its tag from the versions file or a values file, never the chart's default, which Muster can't read |
+| V008 | An environment with `promotion.from` takes versions only by `promote` from that environment: `set` is refused for an app the environment before runs as its own chart, and `promote --from` any other environment is refused |
+
+**Promotion** (`promotion.from`, the order of environments)
+
+| Code | Rule |
+|---|---|
+| P001 | `promotion.from` names an existing environment, not the environment itself |
+| P002 | `promotion.from` makes no loop |
+| P003 | Warning: the environment before hosts every stack this one hosts; one it doesn't takes versions set directly, and its deploys wait for no other environment |
+| P004 | Warning: the environment before runs as its own chart every app this one takes versions for; one it mocks, or runs from a provider or as external, takes versions set directly, without running there first |
+| P005 | Warning: a production environment has `promotion.from` when there are other environments, so nothing reaches it untested |
 
 **Disabled** (`disabled: true`)
 

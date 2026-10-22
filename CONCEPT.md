@@ -247,6 +247,7 @@ Every command selects from it the same way: a whole stack, or one app into one o
 
 - **Whole stack:** members are deployed in the order the stack lists them. Inside a chart, Helm orders its subcharts. `validate` warns when a member is listed before a member it requires.
 - **An app into several stacks:** the cells are independent, so they're marked as able to run in parallel.
+- **Environments:** each environment comes after the one it promotes from (`promotion.from`): dev, then qa, then prod. A generated pipeline's deploy job waits for the same stack's job in the environment before, so a stack only reaches prod once it deployed in qa. Without `promotion.from`, environments with `production: false` go first.
 - **External members** get no `helm` call, only a `skip` with the reason, but keep their place in the order.
 - `deploy --yes` stops at the first failing call. Parallelism, retries and reporting which cells succeeded belong to the pipeline.
 
@@ -259,6 +260,7 @@ Every command selects from it the same way: a whole stack, or one app into one o
 Image versions change far more often than configuration, and shipping one should never mean editing values files. They live in their own file, one per stack and environment, which only `muster versions set` and `promote` change. The file's rules are in [SCHEMA.md §10](SCHEMA.md#stacksstackenvversionsyaml) and its use in the [README](README.md#versions).
 
 - **Promoting is copying.** The file sits beside the stack's other files for that environment, so promoting is copying entries from one environment's file to the next.
+- **Versions move along the chain.** A version is set where the chain starts, and every later environment takes it only by promotion from the one before (`promotion.from`). So a version reaches production only after it ran in every environment before it, whichever pipeline or laptop runs Muster. When the versions file is committed only after its deploy passed, a version in an environment's file means it passed there, and every promotion, automatic, manual or scheduled, copies only versions that passed.
 - **The commit is the record.** Every later deploy uses the file until it changes, so it is committed, and the commit records what shipped where, who shipped it and when. The file therefore holds only versions; in a GitOps flow, the commit is the deploy. Muster itself never commits (section 11).
 - **A gate, not an updater.** Each environment says which tags it takes, and Muster checks every tag wherever it comes from (the versions file, a values file or the chart's default), so a feature build can't reach production through any pipeline or laptop. Muster never picks a tag or asks a registry.
 - **The last layer before secrets,** so a version beats any tag in the values files. Without one, an image keeps the tag its values files or the chart give.

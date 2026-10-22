@@ -33,7 +33,7 @@ RUN apk add --no-cache --virtual .verify gnupg \
  && rm -rf /tmp/helm-secrets.gpg /root/.gnupg /root/.local/share/helm/plugins \
  && apk del .verify
 # muster, checked against the release checksums.
-ARG MUSTER_VERSION=v0.2.0
+ARG MUSTER_VERSION=v0.3.0
 RUN cd /tmp \
  && curl -fsSLO "https://github.com/britzc/muster/releases/download/${MUSTER_VERSION}/muster-linux-${TARGETARCH}" \
  && curl -fsSL "https://github.com/britzc/muster/releases/download/${MUSTER_VERSION}/SHA256SUMS" | grep " muster-linux-${TARGETARCH}$" | sha256sum -c - \
