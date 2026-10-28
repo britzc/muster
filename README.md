@@ -200,6 +200,7 @@ deploy hello in dev:
   environment: dev
   resource_group: dev
   when: on_success
+  timeout: 16m
   script:
     - muster deploy --env dev --stack hello --yes
 deploy hello in qa:
@@ -207,19 +208,20 @@ deploy hello in qa:
   environment: qa
   resource_group: qa
   when: on_success
+  timeout: 16m
   needs: [deploy hello in dev]
   script:
     - muster deploy --env qa --stack hello --yes
 …
 $ muster generate gitlab-ci --stack hello --auto                                # one stack along the chain
-$ muster generate gitlab-ci --by app --app web --tag 1.2.0 --production=false  # a test build of web, in dev
-$ muster generate gitlab-ci --by app --app web --tag 1.2.0 --auto --commit ci/versions.sh  # ship web along the chain
-$ muster generate gitlab-ci --by app --app web --tag 1.2.0 --auto --commit ci/versions.sh --to qa  # ship web to dev, then qa
+$ muster generate gitlab-ci --app web --tag 1.2.0 --production=false  # a test build of web, in dev
+$ muster generate gitlab-ci --app web --tag 1.2.0 --auto --commit ci/versions.sh  # ship web along the chain
+$ muster generate gitlab-ci --app web --tag 1.2.0 --auto --commit ci/versions.sh --to qa  # ship web to dev, then qa
 $ muster generate gitlab-ci --action promote --commit ci/versions.sh             # promote every stack along the chain
 $ muster generate gitlab-ci --action restart --skip local                      # restart every stack, but on a laptop
 ```
 
-`--by stack` (the default) gives a job per stack an environment hosts, `--by app` one per app it deploys: a stage per environment either way. A pipeline covers every stack or app, or one: `--stack <stack>` gives a job per environment that hosts the stack, `--app <app>` one per environment that deploys the app. What is disabled gets no job, an app only gets one where it runs a chart or a mock, and an uninstall from production carries `--confirm`. `--auto` starts the jobs of every environment that isn't manual (`promotion.manual`, by default production); a manual job that a later one needs gets `allow_failure: false`, so the later one waits for it. `--tag` and `--chart` ship a version of the named app: with `--commit <script>`, set where the chain starts and promoted from each environment to the next, each job committing once its deploy passed; without it, only where the chain starts and not committed, for testing a build. `--action promote` promotes each environment from the one before, then deploys. `--to <env>` stops at an environment: only it and those before it on its chain, so `--tag 1.2.0 --commit … --to dev` sets and commits a version in dev alone, and a later promote takes it on. Each job's command carries `--yes`; `--yes=false` gives jobs that only print their calls, and so takes no `--commit`. `muster generate gitlab-ci --help` has every flag. [MATRIX.md](MATRIX.md) explains the continuous delivery principles behind matrix deployments.
+By default a pipeline has a job per stack an environment hosts, and `--by app` one per app it deploys: a stage per environment either way. It covers every stack or app, or one: `--stack <stack>` gives a job per environment that hosts the stack, `--app <app>` one per environment that deploys the app. What is disabled gets no job, an app only gets one where it runs a chart or a mock, and an uninstall from production carries `--confirm`. `--auto` starts the jobs of every environment that isn't manual (`promotion.manual`, by default production), except rollbacks, which a person always starts; a manual job that a later one needs gets `allow_failure: false`, so the later one waits for it. `--tag` and `--chart` ship a version of the named app: with `--commit <script>`, set where the chain starts and promoted from each environment to the next, each job committing once its deploy passed; without it, only where the chain starts and not committed, for testing a build. `--action promote` promotes each environment from the one before, then deploys. `--to <env>` stops at an environment: only it and those before it on its chain, so `--tag 1.2.0 --commit … --to dev` sets and commits a version in dev alone, and a later promote takes it on. Each job's command carries `--yes`, and the job a `timeout`: its helm calls' timeouts added up, since a stack's releases deploy one after another, plus 10 minutes. `--yes=false` gives jobs that only print their calls, as a merge request's pipeline does: they have no GitLab environment, so nothing records a deployment, and they take no `--commit`. `muster generate gitlab-ci --help` has every flag. [MATRIX.md](MATRIX.md) explains the continuous delivery principles behind matrix deployments.
 
 ## Disabling an environment, a stack or an app
 
@@ -261,7 +263,8 @@ In the hello example, `mongodb` is disabled in every environment: it is part of 
 
 | Job | When | What it does |
 |---|---|---|
-| `check` | every merge request and main | `muster validate`, then every stack's deploy in every environment, printed only |
+| `check` | every merge request and main | `muster validate` |
+| `plan`, `matrix` | merge request | Every stack in every environment, production too, as jobs that only print their helm calls (`--yes=false`): the same pipeline main runs, so a review sees what the change deploys where. They have no GitLab environment, so nothing records a deployment |
 | `plan`, `matrix` | main | Deploys every stack along the chain: each stack in an environment after it deployed in the one before; dev and qa right away, prod as manual jobs |
 | `plan`, `matrix` | Run pipeline | What the inputs choose, as manual jobs (below) |
 | `plan`, `matrix` | triggered by an app's pipeline with `APP`, and `TAG` (optionally with `DIGEST`), `CHART` (the version of its chart in a registry) or both | Ships it: `versions set` in dev, deploy, commit and push (`[skip ci]`); then promote to qa, deploy, commit; prod waits for a person. A deploy that fails commits nothing and stops what comes after it. `TO` stops it at an environment, e.g. `TO=dev` |
@@ -269,17 +272,18 @@ In the hello example, `mongodb` is disabled in every environment: it is part of 
 
 **Only main deploys to every environment.** A pipeline run by hand from another branch offers only the non-production environments (`muster list environments --production=false`), for testing a branch. Protect the production environments in GitLab to enforce it there too; with required approvals, their jobs wait for an approver.
 
-**Run pipeline** asks for an `action` (deploy, uninstall, restart, rollback or promote), whether to act on a `stack` or an `app`, and for an app optionally its name and a `version`:
+**Run pipeline** asks for an `action` (deploy, uninstall, restart, rollback or promote), optionally one `stack` or one `app` (otherwise `deploy` picks every stack or every app), and for an app optionally a `version`:
 
 | Choice | Child pipeline |
 |---|---|
 | `stack` | A stage per environment, a job per stack it hosts: `muster <action> --env <env> --stack <stack> --yes` |
 | `app`, no name | A stage per environment, a job per app it deploys: `muster <action> --app <app> --env <env> --all-stacks --yes` |
-| `app` with a name | A stage per environment, a job in each that deploys the app |
-| `app` with a name and a `version` (deploy only) | A job in dev, where the chain starts, first running `muster versions set <app>=<version> … --write` (the app's image named `app` when it has several). The change stays in the job and is not committed: for testing a build |
+| a `stack` named | A stage per environment, a job in each that hosts the stack |
+| an `app` named | A stage per environment, a job in each that deploys the app |
+| an `app` and a `version` (deploy only) | A job in dev, where the chain starts, first running `muster versions set <app>=<version> … --write` (the app's image named `app` when it has several). The change stays in the job and is not committed: for testing a build |
 | `promote` | A job per stack (or app) in every environment with `promotion.from`, each after the one before: `muster versions promote`, deploy, commit once it passed |
 
-An app only gets a job where it is a chart or a mock (`--mode helm,mock`), so no job does nothing. Start one job, several, or a whole stage with Run all manual. A deploy job waits for the same stack's (or app's) job in the environment before, and a `resource_group` per environment queues two jobs in the same one. Uninstalling from a production environment adds `--confirm <env>`: starting the job is the confirmation. Without a `version`, a job deploys the versions the repository records.
+An app only gets a job where it is a chart or a mock (`--mode helm,mock`), so no job does nothing. Start one job, several, or a whole stage with Run all manual. A deploy job waits for the same stack's (or app's) job in the environment before, and a `resource_group` per environment queues two jobs in the same one. Uninstalling from a production environment adds `--confirm <env>`: starting the job is the confirmation. A rollback job always waits for a person, even on main: it goes back one revision, so running it twice undoes it. Each job's `timeout` is its helm calls' timeouts added up, plus 10 minutes, since a stack's releases deploy one after another. Without a `version`, a job deploys the versions the repository records.
 
 ## Repository layout
 

@@ -2,7 +2,8 @@
 # muster list, so nothing here names one: adding an environment or a stack to
 # the repository adds it to the pipeline.
 #
-#   merge request   validate, and print every deploy (no --yes: nothing changes)
+#   merge request   validate, and print every deploy as the matrix's jobs
+#                   (--yes=false: nothing changes, no deployment recorded)
 #   main            deploy every stack along the chain dev, qa, prod: each
 #                   stack in an environment only after it deployed in the one
 #                   before; dev and qa right away, prod as manual jobs
@@ -52,14 +53,17 @@ spec:
       options: [deploy, uninstall, restart, rollback, promote]
       default: deploy
     deploy:
-      description: Stacks into environments, or an app into the stacks and environments that have it
+      description: Every stack, or every app, when neither a stack nor an app is named below
       options: [stack, app]
       default: stack
+    stack:
+      description: "One stack, through every environment that hosts it; empty for every stack"
+      default: ""
     app:
-      description: "app only: the app, or empty for every app"
+      description: "One app, through every environment that deploys it; empty for every app"
       default: ""
     version:
-      description: "app only: a tag[@digest] to deploy in dev instead of the repository's version, for testing; not committed"
+      description: "With an app: a tag[@digest] to deploy in dev instead of the repository's version, for testing; not committed"
       default: ""
     to:
       description: "Only this environment and the ones before it on its chain, e.g. qa for dev and qa; empty for every environment"
@@ -79,19 +83,12 @@ variables:
 
 stages: [check, deploy]
 
-# Every merge request and main: the whole repository is valid, and every
-# stack's deploy in every environment, printed only.
+# Every merge request and main: the whole repository is valid. A merge
+# request's matrix (below) then prints every deploy.
 check:
   stage: check
   script:
     - muster validate
-    - |
-      for env in $(muster list environments --names); do
-        for stack in $(muster list stacks --env "$env" --names); do
-          echo "# $stack in $env"
-          muster deploy --env "$env" --stack "$stack"
-        done
-      done
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -99,6 +96,9 @@ check:
 # The matrix, as a child pipeline that muster generate gitlab-ci writes: a
 # job per cell, each deploy after the same stack's in the environment before
 # (muster generate gitlab-ci --help).
+#   merge request  every stack in every environment, printed only
+#                (--yes=false): each job shows the helm calls a deploy would
+#                make, so a review sees what the change does where
 #   main         every stack in every environment; jobs start themselves
 #                except in manual environments (--auto)
 #   trigger      ship APP: set TAG (and CHART) in dev, deploy, commit; then
@@ -109,44 +109,55 @@ check:
 #   Run pipeline the inputs' choice, every job manual:
 #     stack              a job per stack each environment hosts
 #     app                a job per app each environment deploys
+#     stack named        a job per environment that hosts the stack
 #     app named          a job per environment that deploys the app
 #     app and version    a job in dev, setting the version first (not
 #                        committed)
 #     promote            a job per stack each environment with
 #                        promotion.from hosts: promote, deploy, commit
 # Off the default branch only the non-production environments
-# (--production=false), and never SKIP_ENVIRONMENTS.
+# (--production=false), and never SKIP_ENVIRONMENTS. A rollback job always
+# waits for a person; every job has a timeout from the helm timeouts it runs.
 plan:
   stage: check
   variables:
     ACTION: $[[ inputs.action ]]
     DEPLOY: $[[ inputs.deploy ]]
+    STACK_INPUT: $[[ inputs.stack ]]
     APP_INPUT: $[[ inputs.app ]]
     VERSION: $[[ inputs.version ]]
     TO_INPUT: $[[ inputs.to ]]
   script:
     - |
       case "$CI_PIPELINE_SOURCE" in
+        merge_request_event)
+          set -- --yes=false --auto ;;
         trigger)
-          set -- --by app --app "$APP" --auto --commit ci/versions.sh
+          set -- --app "$APP" --auto --commit ci/versions.sh
           if [ -n "${TAG:-}" ]; then set -- "$@" --tag "$TAG${DIGEST:+@$DIGEST}"; fi
           if [ -n "${CHART:-}" ]; then set -- "$@" --chart "$CHART"; fi
           if [ -n "${TO:-}" ]; then set -- "$@" --to "$TO"; fi ;;
         *)
-          set -- --action "$ACTION" --by "$DEPLOY"
+          set -- --action "$ACTION"
+          if [ -n "$STACK_INPUT" ]; then set -- "$@" --stack "$STACK_INPUT"; fi
           if [ -n "$APP_INPUT" ]; then set -- "$@" --app "$APP_INPUT"; fi
+          if [ -z "$STACK_INPUT$APP_INPUT" ]; then set -- "$@" --by "$DEPLOY"; fi
           if [ -n "$VERSION" ]; then set -- "$@" --tag "$VERSION"; fi
           if [ "$ACTION" = promote ]; then set -- "$@" --commit ci/versions.sh; fi
           if [ -n "$TO_INPUT" ]; then set -- "$@" --to "$TO_INPUT"; fi
           if [ "$CI_PIPELINE_SOURCE" != web ]; then set -- "$@" --auto; fi ;;
       esac
-      if [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then set -- "$@" --production=false; fi
+      # Printing changes nothing, so a merge request shows production too.
+      if [ "$CI_PIPELINE_SOURCE" != merge_request_event ] && [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then
+        set -- "$@" --production=false
+      fi
       for env in $SKIP_ENVIRONMENTS; do set -- "$@" --skip "$env"; done
       muster generate gitlab-ci "$@" --image "$CI_JOB_IMAGE" > matrix.yml
     - cat matrix.yml
   artifacts:
     paths: [matrix.yml]
   rules: &matrix
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     # From an app's pipeline, TAG is the app's image (the one named app when it

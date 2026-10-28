@@ -88,7 +88,7 @@ A cell is small enough to reason about and independent of the cells in other env
 
 ### Every change checked against everything it touches
 
-A change to an app's values affects every stack and environment it runs in. Before merging, `muster validate` resolves the whole matrix: every member's mode, every dependency met by exactly one member, every release name unique and within Helm's limits. The pipeline then prints every stack's deploy in every environment without running it. A change that breaks a cell three environments away fails the merge request, not a production deploy.
+A change to an app's values affects every stack and environment it runs in. Before merging, `muster validate` resolves the whole matrix: every member's mode, every dependency met by exactly one member, every release name unique and within Helm's limits. The merge request's pipeline then prints every stack's deploy in every environment, as the same jobs main would run, without running them (`--yes=false`). A change that breaks a cell three environments away fails the merge request, not a production deploy.
 
 ### Repeatable deploys from desired state
 

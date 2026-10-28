@@ -45,10 +45,11 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Ship an init container's or a sidecar's version | `muster versions set web.sidecar=1.37.0 --env dev --stack hello --write` (`web=…` alone sets web's image named `app`) |
 | Pin an image by digest | `muster versions set web=1.2.0@sha256:… …` |
 | Promote to the next environment | `muster versions promote --env qa --stack hello --write` (from dev, qa's `promotion.from`), `muster deploy --env qa --stack hello --yes`, and commit once it passes; then the same for prod, from qa |
+| Ship through CI | `muster generate gitlab-ci --app web --tag 1.2.0 --auto --commit ci/versions.sh` writes the pipeline: dev, then qa, then prod, each committing once it passed. `--to dev` stops in dev; a later `--action promote` takes it on |
 | Put environments in order | `promotion: { from: qa }` in `environments/prod.yaml`: prod deploys after qa and takes versions only from it. `promotion.manual` says whether a person starts its jobs (default: `production`) |
 | Deploy a stack, or one app | `muster deploy --env qa --stack hello --yes`, `muster deploy --app web --env qa --stack hello --yes` |
 | Restart | `muster restart --app web --env qa --stack hello --yes` |
-| Roll back fast | `muster rollback --app web --env prod --stack hello --yes` (the cluster only: the next deploy brings the repository's version back) |
+| Roll back fast | `muster rollback --app web --env prod --stack hello --yes` (the cluster only: the next deploy brings the repository's version back; a second rollback undoes the first, so a generated rollback job always waits for a person) |
 | Roll back for good | `git revert` the commit that changed `stacks/hello/prod.versions.yaml` (`git log -p` shows it), then `muster deploy --env prod --stack hello --yes`; or ship the previous version from the start of the chain |
 | Freeze an environment, a stack or an app | `disabled: true` and a `reason` in its file, committed ([README](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | Tear down | `muster uninstall --env qa --stack hello --yes` (`--confirm prod` for production; databases are never removed) |
