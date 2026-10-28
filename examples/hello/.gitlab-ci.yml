@@ -61,6 +61,9 @@ spec:
     version:
       description: "app only: a tag[@digest] to deploy in dev instead of the repository's version, for testing; not committed"
       default: ""
+    to:
+      description: "Only this environment and the ones before it on its chain, e.g. qa for dev and qa; empty for every environment"
+      default: ""
 ---
 
 default:
@@ -101,6 +104,7 @@ check:
 #   trigger      ship APP: set TAG (and CHART) in dev, deploy, commit; then
 #                promote it to qa, deploy, commit; prod waits for a person.
 #                A failed deploy commits nothing and stops what comes after.
+#                TO stops it at an environment (TO=dev: dev only).
 #   schedule     promote along the chain, starting itself where it may
 #   Run pipeline the inputs' choice, every job manual:
 #     stack              a job per stack each environment hosts
@@ -119,18 +123,21 @@ plan:
     DEPLOY: $[[ inputs.deploy ]]
     APP_INPUT: $[[ inputs.app ]]
     VERSION: $[[ inputs.version ]]
+    TO_INPUT: $[[ inputs.to ]]
   script:
     - |
       case "$CI_PIPELINE_SOURCE" in
         trigger)
           set -- --by app --app "$APP" --auto --commit ci/versions.sh
           if [ -n "${TAG:-}" ]; then set -- "$@" --tag "$TAG${DIGEST:+@$DIGEST}"; fi
-          if [ -n "${CHART:-}" ]; then set -- "$@" --chart "$CHART"; fi ;;
+          if [ -n "${CHART:-}" ]; then set -- "$@" --chart "$CHART"; fi
+          if [ -n "${TO:-}" ]; then set -- "$@" --to "$TO"; fi ;;
         *)
           set -- --action "$ACTION" --by "$DEPLOY"
           if [ -n "$APP_INPUT" ]; then set -- "$@" --app "$APP_INPUT"; fi
           if [ -n "$VERSION" ]; then set -- "$@" --tag "$VERSION"; fi
           if [ "$ACTION" = promote ]; then set -- "$@" --commit ci/versions.sh; fi
+          if [ -n "$TO_INPUT" ]; then set -- "$@" --to "$TO_INPUT"; fi
           if [ "$CI_PIPELINE_SOURCE" != web ]; then set -- "$@" --auto; fi ;;
       esac
       if [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then set -- "$@" --production=false; fi
@@ -149,7 +156,7 @@ plan:
     # app.yaml):
     #   curl -X POST -F token=$TRIGGER_TOKEN -F ref=main \
     #     -F "variables[APP]=payments" -F "variables[TAG]=1.4.2" -F "variables[DIGEST]=sha256:…" \
-    #     -F "variables[CHART]=1.4.2" \
+    #     -F "variables[CHART]=1.4.2" -F "variables[TO]=qa" \
     #     https://gitlab.example.com/api/v4/projects/<id>/trigger/pipeline
     - if: $CI_PIPELINE_SOURCE == "trigger" && $APP && ($TAG || $CHART)
 
