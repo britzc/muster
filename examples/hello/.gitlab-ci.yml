@@ -13,10 +13,10 @@
 #   schedule        a pipeline schedule that sets the action input to promote
 #                   promotes along the chain, e.g. nightly into qa
 #
-# The order of environments is in the repository: promotion.from in
-# environments/<env>.yaml (qa from dev, prod from qa). promotion.manual says
-# whether a person starts an environment's jobs; by default the production
-# ones.
+# The order of environments is in the repository: the tiers in muster.yaml,
+# a stage each, and each environment's from (qa from dev, prod from qa).
+# manual says whether a person starts an environment's jobs; by default the
+# production ones.
 #
 # Only the default branch (main) deploys to every environment. A pipeline run
 # by hand from another branch offers only the non-production environments, for
@@ -53,8 +53,8 @@ spec:
       options: [deploy, uninstall, restart, rollback, promote]
       default: deploy
     deploy:
-      description: Every stack, or every app, when neither a stack nor an app is named below
-      options: [stack, app]
+      description: A job per stack, per app (in every stack that has it), or per cell (an app in one stack); the cells of a named stack or app with cell, and always when both are named
+      options: [stack, app, cell]
       default: stack
     stack:
       description: "One stack, through every environment that hosts it; empty for every stack"
@@ -111,10 +111,11 @@ check:
 #     app                a job per app each environment deploys
 #     stack named        a job per environment that hosts the stack
 #     app named          a job per environment that deploys the app
+#     cell, or both      a job per app in each stack (--by cell)
 #     app and version    a job in dev, setting the version first (not
 #                        committed)
-#     promote            a job per stack each environment with
-#                        promotion.from hosts: promote, deploy, commit
+#     promote            a job per stack each environment with a from
+#                        (muster.yaml) hosts: promote, deploy, commit
 # Off the default branch only the non-production environments
 # (--production=false), and never SKIP_ENVIRONMENTS. A rollback job always
 # waits for a person; every job has a timeout from the helm timeouts it runs.
@@ -134,6 +135,7 @@ plan:
           set -- --yes=false --auto ;;
         trigger)
           set -- --app "$APP" --auto --commit ci/versions.sh
+          if [ -n "${STACK:-}" ]; then set -- "$@" --stack "$STACK" --by cell; fi
           if [ -n "${TAG:-}" ]; then set -- "$@" --tag "$TAG${DIGEST:+@$DIGEST}"; fi
           if [ -n "${CHART:-}" ]; then set -- "$@" --chart "$CHART"; fi
           if [ -n "${TO:-}" ]; then set -- "$@" --to "$TO"; fi ;;
@@ -141,7 +143,11 @@ plan:
           set -- --action "$ACTION"
           if [ -n "$STACK_INPUT" ]; then set -- "$@" --stack "$STACK_INPUT"; fi
           if [ -n "$APP_INPUT" ]; then set -- "$@" --app "$APP_INPUT"; fi
-          if [ -z "$STACK_INPUT$APP_INPUT" ]; then set -- "$@" --by "$DEPLOY"; fi
+          if [ "$DEPLOY" = cell ] || { [ -n "$STACK_INPUT" ] && [ -n "$APP_INPUT" ]; }; then
+            set -- "$@" --by cell
+          elif [ -z "$STACK_INPUT$APP_INPUT" ]; then
+            set -- "$@" --by "$DEPLOY"
+          fi
           if [ -n "$VERSION" ]; then set -- "$@" --tag "$VERSION"; fi
           if [ "$ACTION" = promote ]; then set -- "$@" --commit ci/versions.sh; fi
           if [ -n "$TO_INPUT" ]; then set -- "$@" --to "$TO_INPUT"; fi
@@ -164,7 +170,7 @@ plan:
     # has several; set the others by name with muster versions set
     # web.sidecar=…), DIGEST optional and passed on unchecked, CHART the
     # version of an app's chart in a registry (oci://… or https://… in its
-    # app.yaml):
+    # app.yaml), STACK optional: ship it in that stack alone (a job per cell):
     #   curl -X POST -F token=$TRIGGER_TOKEN -F ref=main \
     #     -F "variables[APP]=payments" -F "variables[TAG]=1.4.2" -F "variables[DIGEST]=sha256:…" \
     #     -F "variables[CHART]=1.4.2" -F "variables[TO]=qa" \

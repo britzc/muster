@@ -16,7 +16,8 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Everything about a stack in one environment: replicas, hosts, resources | `stacks/<stack>/<env>.yaml` |
 | What every release in an environment gets: ingress class, storage, pull policy | `environments/<env>.yaml` |
 | Which version an environment runs | `stacks/<stack>/<env>.versions.yaml`, only with `muster versions` |
-| The order of environments, and where each takes versions from | `promotion.from` in `environments/<env>.yaml` |
+| The tiers, the order of environments, and where each takes versions from | `tiers` in `muster.yaml` |
+| Where a stack runs | `environments` in `stacks/<stack>/stack.yaml` |
 
 ## Start small
 
@@ -44,9 +45,9 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Ship a version | `muster versions set web=1.2.0 --env dev --stack hello --write`, `muster deploy --app web --env dev --stack hello --yes`, and commit once it passes. Only the first environment of the chain takes `set` |
 | Ship an init container's or a sidecar's version | `muster versions set web.sidecar=1.37.0 --env dev --stack hello --write` (`web=…` alone sets web's image named `app`) |
 | Pin an image by digest | `muster versions set web=1.2.0@sha256:… …` |
-| Promote to the next environment | `muster versions promote --env qa --stack hello --write` (from dev, qa's `promotion.from`), `muster deploy --env qa --stack hello --yes`, and commit once it passes; then the same for prod, from qa |
+| Promote to the next environment | `muster versions promote --env qa --stack hello --write` (from dev, qa's `from` in `muster.yaml`), `muster deploy --env qa --stack hello --yes`, and commit once it passes; then the same for prod, from qa |
 | Ship through CI | `muster generate gitlab-ci --app web --tag 1.2.0 --auto --commit ci/versions.sh` writes the pipeline: dev, then qa, then prod, each committing once it passed. `--to dev` stops in dev; a later `--action promote` takes it on |
-| Put environments in order | `promotion: { from: qa }` in `environments/prod.yaml`: prod deploys after qa and takes versions only from it. `promotion.manual` says whether a person starts its jobs (default: `production`) |
+| Put environments in order | `prod: { from: qa }` under its tier in `muster.yaml`: prod deploys after qa and takes versions only from it. `manual`, on the tier or the environment, says whether a person starts its jobs (default: the tier's `production`) |
 | Deploy a stack, or one app | `muster deploy --env qa --stack hello --yes`, `muster deploy --app web --env qa --stack hello --yes` |
 | Restart | `muster restart --app web --env qa --stack hello --yes` |
 | Roll back fast | `muster rollback --app web --env prod --stack hello --yes` (the cluster only: the next deploy brings the repository's version back; a second rollback undoes the first, so a generated rollback job always waits for a person) |
@@ -61,8 +62,8 @@ Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm
 | To add… | Create | Then |
 |---|---|---|
 | An app | `charts/<app>/` (or `chart: oci://…`), `apps/<app>/app.yaml`, `apps/<app>/values.yaml` | List it in a stack's `stack.yaml` |
-| A stack | `stacks/<stack>/stack.yaml` with its members in deploy order | Host it in an environment |
-| An environment | `environments/<env>.yaml`: kube context, namespace, values | `stacks/<stack>/<env>.yaml` for each stack it hosts, `promotion.from` for where it sits in the chain, and its versions by `muster versions promote` (or `set`, if it is first) |
+| A stack | `stacks/<stack>/stack.yaml` with its members in deploy order, and the environments it runs in | `stacks/<stack>/<env>.yaml` where something differs |
+| An environment | `environments/<env>.yaml`: kube context, namespace, values | its name under `environments` in each stack it hosts (and `stacks/<stack>/<env>.yaml` where something differs), an entry under a tier in `muster.yaml` for its kind and where it sits in the chain, and its versions by `muster versions promote` (or `set`, if it is first) |
 
 `muster validate` says what is missing. The GitLab pipeline picks up new environments, stacks and apps by itself ([README](README.md#gitlab-ci)).
 

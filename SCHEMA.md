@@ -60,19 +60,46 @@ stacks/customer-platform/
   prod.payments.secrets.yaml
 ```
 
-- **An environment hosts a stack when `stacks/<stack>/<env>.yaml` exists.** No list of stacks is kept anywhere else. A file containing only `apiVersion` means "host it with all defaults".
+- **A stack says where it runs.** `environments` in `stacks/<stack>/stack.yaml` lists the environments that host it, and nothing else does. `stacks/<stack>/<env>.yaml` is optional: it holds only what differs in that environment, so a stack that runs with all defaults there needs no file.
 - **Discovery is by folder.** An app exists if `apps/<app>/app.yaml` exists, a stack if `stacks/<stack>/stack.yaml` exists, an environment if `environments/<env>.yaml` exists.
-- **A stack file for an unknown environment is an error.** `stacks/customer-platform/qq.yaml` fails `validate` with "no environment `qq`; environments are: local, qa, prod".
+- **A stack file for an unknown environment, or one the stack doesn't list, is an error.** `stacks/customer-platform/qq.yaml` fails `validate` with "no environment `qq`; environments are: local, qa, prod", and a file for an environment missing from `environments` with "stack `customer-platform` does not run in …".
 - **What stays outside the stack folder, and why:** the app definition and its values (owned by the app team, shared by every stack), the environment (shared by every stack in it), and providers (shared by everything).
 - **Values live in three places**: the app (`apps/<app>/values.yaml`), the environment (`values` in `environments/<env>.yaml`) and the stack in the environment (`values.<app>` in `stacks/<stack>/<env>.yaml`). Anything that isn't the app's own default goes in the stack's environment file (section 11).
 
 ## 3. Root: `muster.yaml`
 
+The release flow: the kinds of environment (tiers) in deploy order, the environments in each, and where each takes its changes from. An environment's own file (section 9) says only what the environment is.
+
 ```yaml
 apiVersion: muster/v1alpha1
+tiers:                                # in deploy order: a stage each in a generated pipeline
+  - name: development
+    environments:
+      dev: {}                         # first in its chain: versions are set here
+  - name: testing
+    environments:
+      qa: { from: dev }               # qa deploys after dev, and takes versions only from it
+  - name: production
+    production: true                  # no mocks; an uninstall needs --confirm <env>
+    manual: true                      # a person starts each job (default: production)
+    environments:
+      prod-eu: { from: qa }
+      prod-us: { from: qa, manual: false }   # starts itself once qa passed
 ```
 
-No other fields in v1alpha1. It marks the repository root, so Muster can run from any subfolder. `--repo` overrides it.
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `tiers` | list | — | Required. The kinds of environment, in deploy order. A generated pipeline has a stage per tier, so environments of one tier share a stage. A tier named after one of GitLab's deployment tiers (`production`, `staging`, `testing`, `development`, `other`) is also the `deployment_tier` of its environments' jobs |
+| `tiers[].name` | name | — | A valid DNS-1123 label (S002), each tier once (S001) |
+| `tiers[].production` | bool | `false` | Its environments are production: `mock` members are an error (X003), `muster uninstall --yes` also needs `--confirm <env>`, and P005 warns when one takes its changes from nowhere |
+| `tiers[].manual` | bool | `production` | A person starts each of its environments' jobs in a generated pipeline, even with `--auto`. A rollback job always waits for a person, wherever it runs |
+| `tiers[].environments` | map | — | The tier's environments, by name. Every `environments/<env>.yaml` is in exactly one tier, and every name here has that file (S001, S004) |
+| `tiers[].environments.<env>.from` | environment name | — | The environment before this one: the start of a chain when left out. This one comes after it in deploy order, a generated pipeline's deploy job here needs the same stack's job there, and versions reach this one only by `versions promote` from it (V008). It hosts every stack this one hosts (P003, a warning) and runs as its own chart every app this one takes versions for (P004, a warning); an app it doesn't is set here directly. No loops (P002), and not from a later tier (P006, a warning: a pipeline can't wait for a later stage, so `generate gitlab-ci` refuses it). Two environments may promote from the same one |
+| `tiers[].environments.<env>.manual` | bool | the tier's `manual` | The same as the tier's, for this environment only |
+
+It also marks the repository root, so Muster can run from any subfolder. `--repo` overrides it.
+
+Muster keeps to these rules and no more: who may start a job, approvals and deploy windows belong to the CI tool (in GitLab, protected environments and deployment approvals).
 
 ## 4. Types
 
@@ -186,10 +213,11 @@ chartVersion: 15.5.0
 
 ## 7. Stacks: `stacks/<stack>/stack.yaml`
 
-What the stack is: its members and how they connect. It holds no values; those are per environment (section 8).
+What the stack is: where it runs, its members and how they connect. It holds no values; those are per environment (section 8).
 
 ```yaml
 apiVersion: muster/v1alpha1
+environments: [local, qa, prod]  # where it runs
 members:                     # deploy order
   - orders-db
   - sanctions-gateway
@@ -202,12 +230,13 @@ wiring:                      # only when more than one member could meet a requi
 
 | Field | Type | Meaning |
 |---|---|---|
+| `environments` | list of environment names | The environments that host the stack. Each exists (S004), once (S001). A stack listing none runs nowhere |
 | `members` | list of app names | The stack's apps, in deploy order. No duplicates |
 | `wiring` | map of `<app>.<requirement>` → member | Picks the member that meets a requirement when more than one provides its type |
 
 ## 8. Stack in an environment: `stacks/<stack>/<env>.yaml`
 
-**The main file people edit.** Everything that makes this stack different in this environment.
+**The main file people edit.** Everything that makes this stack different in this environment. Optional: an environment the stack lists (section 7) hosts it without one, with every member in `helm` mode and no values of its own.
 
 ```yaml
 # stacks/customer-platform/qa.yaml
@@ -272,10 +301,6 @@ Only what every stack in the environment shares: where it is and how it's deploy
 ```yaml
 apiVersion: muster/v1alpha1
 gitops: false                         # true: a GitOps controller owns the releases
-production: false
-promotion:
-  from: dev                           # qa deploys after dev, and takes versions only from it
-  manual: false                       # its pipeline jobs start themselves (default: production)
 versions:
   tags: '.+'                          # the image tags it takes, matched in full
 cluster:
@@ -299,9 +324,6 @@ values:                               # every release in qa
 |---|---|---|---|
 | `values` | values | — | Every release in the environment gets them, mocks and provider charts included: platform settings such as the ingress class, storage class or image pull policy. Keep them under `global:`, which every chart accepts |
 | `gitops` | bool | `false` | A GitOps controller owns the releases: `muster deploy`, `uninstall`, `restart` and `rollback` make no call for them, and `releases` reports `gitops: true` so other callers skip them too |
-| `production` | bool | `false` | `mock` members are an error when `true`; `muster uninstall --yes` also needs `--confirm <env>` |
-| `promotion.from` | environment name | — | The environment before this one: the start of a chain when left out. This one comes after it in deploy order, a generated pipeline's deploy job here needs the same stack's job there, and versions reach this one only by `versions promote` from it (V008). It hosts every stack this one hosts (P003, a warning) and runs as its own chart every app this one takes versions for (P004, a warning); an app it doesn't is set here directly. No loops (P002). Typically dev, then qa from dev, then prod from qa; two environments may promote from the same one |
-| `promotion.manual` | bool | `production` | A person starts each of the environment's jobs in a generated pipeline, even with `--auto`. A rollback job always waits for a person, wherever it runs |
 | `disabled` / `reason` | bool / string | `false` | `disabled: true` turns the whole environment off for changes; `reason` says why, and is required with it ([Disabling](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | `versions.tags` | regular expression | any tag | The image tags the environment takes, matched in full, e.g. `'[0-9]+\.[0-9]+\.[0-9]+'` for release tags only. Checked for every image of an app's own chart, wherever its tag comes from: the versions file, a values file or the chart's default (V004) |
 | `cluster.context` | string | — | Required unless `gitops` is `true` |
@@ -335,7 +357,7 @@ The image versions to deploy for a stack in one environment, and the versions of
 
 ```bash
 muster versions set payments=1.4.2 --env qa --stack customer-platform --write # qa starts the chain
-muster versions promote --env prod --stack customer-platform --write          # what qa runs, into prod (promotion.from: qa)
+muster versions promote --env prod --stack customer-platform --write          # what qa runs, into prod (prod: { from: qa } in muster.yaml)
 ```
 
 ```yaml
@@ -355,7 +377,7 @@ versions:
 - **It persists.** Every later deploy of the stack in that environment uses it, until it is changed. Commit it, so the next pipeline deploys what the last one did. Git records who changed it and when, so the file holds only versions: writing the same versions again leaves it unchanged.
 - **`chart` is the version of the app's chart, when it is in a registry** (section 1), set with `versions set payments.chart=1.4.0` and copied by `promote` like a tag. Such an app needs it in every environment that hosts it (V006); an app whose chart is in `charts/` has none. It is an exact chart version, and `versions.tags` doesn't apply to it.
 - **It only applies to an app running its own chart** that names `images` or whose chart is in a registry: never to a mock or to a provider's chart filling a slot. `muster list … --versioned` gives where that holds.
-- **It moves along the chain** (§9, `promotion.from`). In an environment with `promotion.from`, `set` is refused for every app that environment runs as its own chart, and `promote` copies from it alone, which `--from` defaults to (V008). Without `promotion.from`, `promote` needs `--from`.
+- **It moves along the chain** (§3, `from`). In an environment with a `from`, `set` is refused for every app that environment runs as its own chart, and `promote` copies from it alone, which `--from` defaults to (V008). Without one, `promote` needs `--from`.
 - `set` and `promote` print the new file; with `--write` they replace it atomically.
 
 ### `stacks/<stack>/<env>.<app>.secrets.yaml`
@@ -413,11 +435,11 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 
 | Code | Rule |
 |---|---|
-| S001 | Every Muster file has `apiVersion: muster/v1alpha1`, no unknown fields, and the fields it requires (an environment's `namespace`, and `cluster.context` unless `gitops`; a path for every image; a `reason` with `disabled: true`, and only then) |
-| S002 | Names of apps, stacks, environments, images and types are valid DNS-1123 labels of at most 40 characters; no image is named `chart` |
+| S001 | Every Muster file has `apiVersion: muster/v1alpha1`, no unknown fields, and the fields it requires (`tiers` in `muster.yaml`, each tier once; an environment's `namespace`, and `cluster.context` unless `gitops`; a path for every image; a `reason` with `disabled: true`, and only then). Every environment is in exactly one tier |
+| S002 | Names of apps, stacks, environments, tiers, images and types are valid DNS-1123 labels of at most 40 characters; no image is named `chart` |
 | S003 | Every referenced chart folder exists and contains `Chart.yaml` |
-| S004 | Every referenced environment, stack, app and provider exists |
-| S005 | Every `stacks/<stack>/<env>*.yaml` file names an existing environment and, for secrets files, a member of the stack; `apps/<app>/` holds only `app.yaml` and `values.yaml` |
+| S004 | Every referenced environment, stack, app and provider exists, including each environment a tier lists |
+| S005 | Every `stacks/<stack>/<env>*.yaml` file names an existing environment the stack lists in `environments` and, for secrets files, a member of the stack; `apps/<app>/` holds only `app.yaml` and `values.yaml` |
 | S006 | Every `*.secrets.yaml` file has SOPS metadata (checked without decrypting) |
 | S007 | A chart in a registry is `oci://<registry>/<path>/<chart>` or `https://<repository>/<chart>`, without credentials; a provider's or mock's has a `chartVersion` that is an exact version, and a chart in `charts/` has none |
 
@@ -435,7 +457,7 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 |---|---|
 | X001 | A `chart: none` member in `helm` mode has a provider with a chart; otherwise it is `external` or `mock` |
 | X002 | `provider` is used only on `chart: none` apps and never with `mock`, its type matches the app's `provides`, and a provider without a chart is used only with `mode: external` |
-| X003 | `mock` needs `chart`; `mock` is not allowed when the environment has `production: true` |
+| X003 | `mock` needs `chart`; `mock` is not allowed in an environment whose tier has `production: true` |
 | X004 | Every requirement of a `helm` or `mock` cell has exactly one source: a member of the same stack, through `wiring` if more than one provides its type |
 | X005 | Every source delivers every output its consumers map: from `provides[].outputs`, provider, externals file and entry combined |
 | X006 | Release names are at most 53 characters, and unique per namespace across the stacks an environment hosts (stack `a-b` with app `c` and stack `a` with app `b-c` both make `a-b-c`) |
@@ -452,17 +474,18 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 | V005 | Warning: the environment's `values` or the stack's `values.<app>` for the same environment also set an image's tag path. The versions file wins, so remove one. A tag in `apps/<app>/values.yaml` is the fallback and is not reported |
 | V006 | An app whose own chart is in a registry has `<app>.chart` in the versions file of every environment that hosts it, an exact chart version; an app whose chart is in `charts/` has none |
 | V007 | Each image of an app whose chart is in a registry gets its tag from the versions file or a values file, never the chart's default, which Muster can't read |
-| V008 | An environment with `promotion.from` takes versions only by `promote` from that environment: `set` is refused for an app the environment before runs as its own chart, and `promote --from` any other environment is refused |
+| V008 | An environment with a `from` takes versions only by `promote` from that environment: `set` is refused for an app the environment before runs as its own chart, and `promote --from` any other environment is refused |
 
-**Promotion** (`promotion.from`, the order of environments)
+**Promotion** (`from` in `muster.yaml`, the order of environments)
 
 | Code | Rule |
 |---|---|
-| P001 | `promotion.from` names an existing environment, not the environment itself |
-| P002 | `promotion.from` makes no loop |
+| P001 | `from` names an existing environment, not the environment itself |
+| P002 | `from` makes no loop |
 | P003 | Warning: the environment before hosts every stack this one hosts; one it doesn't takes versions set directly, and its deploys wait for no other environment |
 | P004 | Warning: the environment before runs as its own chart every app this one takes versions for; one it mocks, or runs from a provider or as external, takes versions set directly, without running there first |
-| P005 | Warning: a production environment has `promotion.from` when there are other environments, so nothing reaches it untested |
+| P005 | Warning: a production environment has a `from` when there are other environments, so nothing reaches it untested |
+| P006 | Warning: `from` names an environment in a later tier. A generated pipeline can't wait for a later stage, so `generate gitlab-ci` refuses it |
 
 **Disabled** (`disabled: true`)
 
@@ -474,7 +497,7 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 
 | Code | Rule |
 |---|---|
-| L001 | The environment hosts every named stack; the error lists the stacks it does host |
+| L001 | The environment hosts every named stack (`environments` in its `stack.yaml`); the error lists the stacks it does host |
 | L002 | The app is a member of every named stack; the error lists the stack's members |
 | L003 | Every command names its stacks with `--stack` or `--all-stacks`; an app with `--all-stacks` is in at least one hosted stack |
 

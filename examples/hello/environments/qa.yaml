@@ -1,7 +1,4 @@
 apiVersion: muster/v1alpha1
-production: false
-promotion:
-  from: dev                     # qa takes only what passed in dev
 cluster:
   context: minikube               # the qa cluster's kube context; all minikube here
 namespace: "{stack}-{env}"

@@ -1,1 +1,8 @@
 apiVersion: muster/v1alpha1
+tiers:                          # kinds of environment, in deploy order: a pipeline stage each
+  - name: development
+    environments:
+      dev: {}
+  - name: testing
+    environments:
+      qa: { from: dev }         # qa takes only what passed in dev

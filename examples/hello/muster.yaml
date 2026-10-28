@@ -1,1 +1,12 @@
 apiVersion: muster/v1alpha1
+tiers:                          # kinds of environment, in deploy order: a pipeline stage each
+  - name: development
+    environments:
+      dev: {}
+  - name: testing
+    environments:
+      qa: { from: dev }         # qa takes only what passed in dev
+  - name: production
+    production: true            # no mocks, --confirm to uninstall, manual jobs by default
+    environments:
+      prod: { from: qa }        # prod takes only what passed in qa

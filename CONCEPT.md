@@ -42,7 +42,7 @@ environment  →  one cluster (an AWS account and region) and its shared setting
     app      →  one Helm release (its chart's workloads and pods), or an external or mock stand-in
 ```
 
-- **An environment is one deploy target**, not a group of them: its file names one kube context, so one cluster, in one AWS account and region. Several production accounts are several environments, each with `production: true`, e.g. `prod-eu` (account A, eu-west-1) and `prod-us` (account B, us-east-1). `muster list environments --production` lists them together. The environment's `values` are what every release in that cluster shares: ingress class, storage class, identity (IRSA), image registry.
+- **An environment is one deploy target**, not a group of them: its file names one kube context, so one cluster, in one AWS account and region. Several production accounts are several environments in one production tier (`muster.yaml`), e.g. `prod-eu` (account A, eu-west-1) and `prod-us` (account B, us-east-1). `muster list environments --production` lists them together, and a generated pipeline puts them in one stage. The environment's `values` are what every release in that cluster shares: ingress class, storage class, identity (IRSA), image registry.
 - **A stack usually gets its own namespace.** The environment decides: `namespace: "{stack}-{env}"` or `"{stack}"` gives each stack one, and a fixed name (`namespace: platform`) puts several stacks in one namespace, where release names (`<stack>-<app>`) keep them apart. The stack sets the deploy order, and `stacks/<stack>/<env>.yaml` holds everything about it in one environment.
 - **An app is a Helm release, not a pod.** Its chart can run several Deployments, StatefulSets, Jobs and Services, each with as many pods as its replicas. One app in two stacks is two releases (`hello-api`, `greeter-api`). A member can also run nothing in Kubernetes: an `external` one (RDS, a service on EC2) only provides outputs, and a `mock` one runs a stand-in chart.
 
@@ -52,7 +52,7 @@ Muster works on a repository with a fixed layout, the way Argo CD works on a Git
 
 The layout is designed to be **easy to maintain and compare**. Everything about one stack in one environment is in one file, `stacks/<stack>/<env>.yaml`. Comparing qa with prod is a diff of two files, not a search through scattered values and SOPS files.
 
-- **An environment hosts a stack when that file exists.** No list of hosted stacks is kept anywhere else.
+- **A stack says where it runs**: `environments` in its `stack.yaml`. The per-environment file is optional and holds only what differs there, so deleting it never stops a stack running, and a stray one is an error.
 - Only what is shared stays outside the stack folder: the app definition and its values (one per app), the environment (one per environment) and providers.
 - Which stacks an app belongs to, and where it can be deployed, are never written down. Muster derives them from the stack folders (section 7).
 
@@ -89,6 +89,7 @@ chart: none
 provides: [{ type: http-api }]
 
 # stacks/customer-platform/stack.yaml
+environments: [qa, prod]                                                     # where it runs
 members: [orders-db, sanctions-gateway, ledger-service, payments, billing]   # deploy order
 
 # stacks/customer-platform/prod.yaml
@@ -134,6 +135,7 @@ Each requirement has exactly one source. `validate` rejects a requirement no mem
 
 ```yaml
 # stacks/customer-platform/stack.yaml
+environments: [qa, prod]
 members: [orders-db, reporting-db, payments, billing]
 wiring:
   payments.db: orders-db
@@ -247,7 +249,7 @@ Every command selects from it the same way: a whole stack, or one app into one o
 
 - **Whole stack:** members are deployed in the order the stack lists them. Inside a chart, Helm orders its subcharts. `validate` warns when a member is listed before a member it requires.
 - **An app into several stacks:** the cells are independent, so they're marked as able to run in parallel.
-- **Environments:** each environment comes after the one it promotes from (`promotion.from`): dev, then qa, then prod. A generated pipeline's deploy job waits for the same stack's job in the environment before, so a stack only reaches prod once it deployed in qa. Without `promotion.from`, environments with `production: false` go first.
+- **Environments:** each environment comes after the one it promotes from (its `from` in `muster.yaml`): dev, then qa, then prod. A generated pipeline's deploy job waits for the same stack's job in the environment before, so a stack only reaches prod once it deployed in qa. Otherwise environments go tier by tier, in the order `muster.yaml` lists the tiers; a generated pipeline has a stage per tier.
 - **External members** get no `helm` call, only a `skip` with the reason, but keep their place in the order.
 - `deploy --yes` stops at the first failing call. Parallelism, retries and reporting which cells succeeded belong to the pipeline.
 
@@ -260,7 +262,7 @@ Every command selects from it the same way: a whole stack, or one app into one o
 Image versions change far more often than configuration, and shipping one should never mean editing values files. They live in their own file, one per stack and environment, which only `muster versions set` and `promote` change. The file's rules are in [SCHEMA.md §10](SCHEMA.md#stacksstackenvversionsyaml) and its use in the [README](README.md#versions).
 
 - **Promoting is copying.** The file sits beside the stack's other files for that environment, so promoting is copying entries from one environment's file to the next.
-- **Versions move along the chain.** A version is set where the chain starts, and every later environment takes it only by promotion from the one before (`promotion.from`). So a version reaches production only after it ran in every environment before it, whichever pipeline or laptop runs Muster. When the versions file is committed only after its deploy passed, a version in an environment's file means it passed there, and every promotion, automatic, manual or scheduled, copies only versions that passed.
+- **Versions move along the chain.** A version is set where the chain starts, and every later environment takes it only by promotion from the one before (`from`). So a version reaches production only after it ran in every environment before it, whichever pipeline or laptop runs Muster. When the versions file is committed only after its deploy passed, a version in an environment's file means it passed there, and every promotion, automatic, manual or scheduled, copies only versions that passed.
 - **The commit is the record.** Every later deploy uses the file until it changes, so it is committed, and the commit records what shipped where, who shipped it and when. The file therefore holds only versions; in a GitOps flow, the commit is the deploy. Muster itself never commits (section 11).
 - **A gate, not an updater.** Each environment says which tags it takes, and Muster checks every tag wherever it comes from (the versions file, a values file or the chart's default), so a feature build can't reach production through any pipeline or laptop. Muster never picks a tag or asks a registry.
 - **The last layer before secrets,** so a version beats any tag in the values files. Without one, an image keeps the tag its values files or the chart give.
@@ -318,7 +320,7 @@ The tool that acts owns the consequence, but Muster's output decides what that t
 | Deletion by omission | A member disappears after a rename or bad merge, and a teardown or cleanup removes its release, database included | Environments can't omit members, so a cell only disappears when a stack's member list changes or a `stacks/<stack>/<env>.yaml` file is deleted. `commands uninstall` never builds a call for a protected release. |
 | Mode change | A member switches from `helm` to `external` or `mock`, and its real release is pruned | Modes are explicit in the stack's environment file, so the change is a visible line in review; `releases` shows every member's mode. (A classified diff for CI is on the roadmap.) |
 | Renamed releases | An environment's `release.prefix` or `release.suffix` changes, so every release in it gets a new name: the next deploy installs new releases beside the old ones, a database included | The setting is one visible line in the environment file, and `releases` shows the new names. Muster finds no old releases, since it never queries the cluster: uninstall them first, and move a protected release's data by hand |
-| Mock in production | A copy-paste puts `sanctions-mock` into a production environment | `validate` rejects `mock` mode in environments marked as production |
+| Mock in production | A copy-paste puts `sanctions-mock` into a production environment | `validate` rejects `mock` mode in environments of a production tier |
 | Stale external outputs | The externals file points at an old EC2 host after Ansible moved the service | The file is the contract: `validate` checks that the outputs consumers need are there, and `values --explain` shows it as the source. Keeping it current belongs to the pipeline that deploys the external member |
 | Wrong target | Commands run against whatever kube-context is active, possibly production | Every call names `--kube-context` and `--namespace` from the environment file, so nothing depends on the active context |
 | Accidental execution | A saved output or a shell-history line is replayed against an environment | `deploy`, `uninstall`, `restart` and `rollback` print unless given `--yes`, and an uninstall in a production environment also needs `--confirm <env>`. A protected release never gets an uninstall at all |

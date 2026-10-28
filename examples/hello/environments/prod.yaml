@@ -1,9 +1,6 @@
 apiVersion: muster/v1alpha1
-production: true
 versions:
   tags: '[0-9]+\.[0-9]+\.[0-9]+(-alpine)?'   # release tags only
-promotion:
-  from: qa                      # prod takes only what passed in qa; manual, as production
 cluster:
   context: minikube               # the prod cluster's kube context; all minikube here
 namespace: "{stack}-{env}"

@@ -38,7 +38,7 @@ flowchart LR
     end
 
     list["muster list … --names<br/>the axes, in deploy order,<br/>without what is disabled"]
-    gen["muster generate gitlab-ci<br/>a stage per environment,<br/>a job per cell"]
+    gen["muster generate gitlab-ci<br/>a stage per tier,<br/>a job per cell"]
 
     subgraph pipeline["Pipeline"]
         direction LR
@@ -71,12 +71,12 @@ An app's pipeline builds an image once and records its tag in the versions file 
 
 ### Each environment after the one before, production on purpose
 
-Environments form a chain: each names the one it promotes from (`promotion.from`), such as dev, then qa from dev, then prod from qa. The chain is the deploy order, and it is enforced twice:
+Environments form a chain: each names the one it promotes from (`from` in `muster.yaml`), such as dev, then qa from dev, then prod from qa. The chain is the deploy order, and it is enforced twice:
 
 - **Versions:** an environment takes versions only by promotion from the one before it, so a version can't skip an environment, from any pipeline or laptop.
 - **Deploys:** in a generated pipeline, each deploy job needs the same stack's job in the environment before, so a stack that fails in qa never starts in prod.
 
-Production jobs wait for a person by default (`promotion.manual`), and only the main branch can reach production at all. A branch pipeline offers only test environments.
+Production jobs wait for a person by default (`manual`, which defaults to the tier's `production`), and only the main branch can reach production at all. A branch pipeline offers only test environments.
 
 ### Small, independent units
 
@@ -129,7 +129,7 @@ flowchart LR
 ```
 
 1. **Check:** every merge request and every commit on main runs `muster validate` and prints every deploy, so a change that breaks any cell fails before it merges.
-2. **Deploy from main:** main deploys every stack, a stage per environment in deploy order, each stack's job after its job in the environment before: the test environments right away, production as manual jobs.
+2. **Deploy from main:** main deploys every stack, a stage per tier in deploy order, each stack's job after its job in the environment before: the test environments right away, production as manual jobs.
 3. **Ship:** an app's pipeline triggers a ship with the new tag. It sets the tag where the chain starts (dev) and deploys the app; only when that passes does it commit. Then each environment in turn promotes from the one before, deploys and commits, until a manual one (prod), which waits for a person. A deploy that fails commits nothing, so the environment's versions file keeps what last passed, and nothing after it starts.
 4. **Promote:** a person, or a schedule (nightly into qa, say), promotes along the chain without a new build: each environment copies what passed in the one before, prod checks it against its tag policy, and each commits once its deploy passed.
 
