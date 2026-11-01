@@ -1,0 +1,7 @@
+# An ElastiCache for Redis cluster, created outside Muster (by Terraform).
+# No chart, so its members are external. host comes from the externals file.
+apiVersion: muster/v1alpha1
+type: redis
+outputs:
+  port: "6379"
+  tls:  "true"                # in-transit encryption is on

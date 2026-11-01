@@ -1,0 +1,43 @@
+# Liquibase, as Helm hooks: before every install and upgrade, Helm creates the
+# changelog, runs the Job and waits for it. If it fails, the deploy fails and
+# the api's pods are not changed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-changelog
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+  changelog.yaml: |
+{{ .Files.Get "migrations/changelog.yaml" | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: liquibase
+          image: "{{ .Values.migrations.image.repository }}:{{ .Values.migrations.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.migrations.image.pullPolicy }}
+          args: ["--search-path=/liquibase/changelog", "--changelog-file=changelog.yaml", "update"]
+          env:
+            - name: LIQUIBASE_COMMAND_URL
+              value: "jdbc:postgresql://{{ .Values.database.host }}:{{ .Values.database.port }}/{{ .Values.database.name }}"
+            - { name: LIQUIBASE_COMMAND_USERNAME, value: {{ .Values.database.username | quote }} }
+            - name: LIQUIBASE_COMMAND_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.database.existingSecret }}, key: password } }
+          volumeMounts: [{ name: changelog, mountPath: /liquibase/changelog }]
+      volumes:
+        - name: changelog
+          configMap: { name: {{ .Release.Name }}-changelog }

@@ -1,0 +1,10 @@
+# The shop in qa: Redis in the cluster, like dev, with more memory.
+apiVersion: muster/v1alpha1
+members:
+  db:    { provider: postgres }
+  cache: { provider: redis }
+values:
+  cache:                      # the redis chart's values
+    maxmemory: 128mb
+  api:
+    replicaCount: 2

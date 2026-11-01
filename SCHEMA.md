@@ -22,7 +22,7 @@ Status: **draft v1alpha1**. This is the contract for Muster's files and rules: w
   | `https://<repository>/<chart>`, e.g. `https://charts.example.com/stable/postgresql` | In a classic chart repository: its URL, then the chart's name | Pinned (below) |
 
   A chart in a registry is pinned to an exact version (`1.4.2`, `1.5.0-rc.1`; no ranges), so the same files always deploy the same chart: an app's own chart in its stack's versions file, as `<app>.chart` (section 10), so it moves between environments with `versions set` and `promote`; a provider's or a mock's in `chartVersion` beside it. **Muster never fetches a chart:** helm does, at deploy time, with the credentials it has (`helm registry login`, `helm repo add`), and the reference never holds credentials. So Muster can't read a remote chart's defaults: `values --explain` leaves them out, and each image of an app whose chart is in a registry must get its tag from the versions file or the values (V007).
-- **Placeholders.** A small fixed set may appear in output templates and in `namespace` only: `{env}`, `{stack}`, `{app}`, `{release}`, `{namespace}`. There are no expressions, functions or conditionals, and never any in values.
+- **Placeholders.** A small fixed set may appear in output templates and in `namespace` only: `{env}`, `{stack}`, `{app}`, `{release}`, `{namespace}`, and `{instance}` in the namespace of an ephemeral environment (section 9). There are no expressions, functions or conditionals, and never any in values.
 
 ## 2. Repository layout
 
@@ -76,6 +76,10 @@ tiers:                                # in deploy order: a stage each in a gener
   - name: development
     environments:
       dev: {}                         # first in its chain: versions are set here
+  - name: review
+    ephemeral: true                   # an instance per branch: commands take --instance
+    environments:
+      preview: {}
   - name: testing
     environments:
       qa: { from: dev }               # qa deploys after dev, and takes versions only from it
@@ -92,6 +96,7 @@ tiers:                                # in deploy order: a stage each in a gener
 | `tiers` | list | — | Required. The kinds of environment, in deploy order. A generated pipeline has a stage per tier, so environments of one tier share a stage. A tier named after one of GitLab's deployment tiers (`production`, `staging`, `testing`, `development`, `other`) is also the `deployment_tier` of its environments' jobs |
 | `tiers[].name` | name | — | A valid DNS-1123 label (S002), each tier once (S001) |
 | `tiers[].production` | bool | `false` | Its environments are production: `mock` members are an error (X003), `muster uninstall --yes` also needs `--confirm <env>`, and P005 warns when one takes its changes from nowhere |
+| `tiers[].ephemeral` | bool | `false` | Its environments have an instance per branch, named with `--instance`, each stack of each in a namespace of its own that the instance's teardown deletes ([README](README.md#branch-environments)). Never production, no `from` to or from them (E001), and section 9 has what their files need (E002) |
 | `tiers[].manual` | bool | `production` | A person starts each of its environments' jobs in a generated pipeline, even with `--auto`. A rollback job always waits for a person, wherever it runs |
 | `tiers[].environments` | map | — | The tier's environments, by name. Every `environments/<env>.yaml` is in exactly one tier, and every name here has that file (S001, S004) |
 | `tiers[].environments.<env>.from` | environment name | — | The environment before this one: the start of a chain when left out. This one comes after it in deploy order, a generated pipeline's deploy job here needs the same stack's job there, and versions reach this one only by `versions promote` from it (V008). It hosts every stack this one hosts (P003, a warning) and runs as its own chart every app this one takes versions for (P004, a warning); an app it doesn't is set here directly. No loops (P002), and not from a later tier (P006, a warning: a pipeline can't wait for a later stage, so `generate gitlab-ci` refuses it). Two environments may promote from the same one |
@@ -327,9 +332,9 @@ values:                               # every release in qa
 | `disabled` / `reason` | bool / string | `false` | `disabled: true` turns the whole environment off for changes; `reason` says why, and is required with it ([Disabling](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | `versions.tags` | regular expression | any tag | The image tags the environment takes, matched in full, e.g. `'[0-9]+\.[0-9]+\.[0-9]+'` for release tags only. Checked for every image of an app's own chart, wherever its tag comes from: the versions file, a values file or the chart's default (V004) |
 | `cluster.context` | string | — | Required unless `gitops` is `true` |
-| `namespace` | string | — | May use `{stack}` and `{env}` |
+| `namespace` | string | — | May use `{stack}` and `{env}`. In an ephemeral tier it must use `{stack}` and `{instance}`, the instance `--instance` names, so a teardown deletes one stack of one instance; elsewhere `{instance}` is an error (E002) |
 | `release.prefix` / `release.suffix` | string / string | `""` / `""` | Added to every release name in the environment, like a Kustomize overlay's `namePrefix` and `nameSuffix`: `<prefix><stack>-<app><suffix>`. Lowercase letters, digits and `-`; a prefix doesn't start with `-` and a suffix doesn't end with it (S002). `{release}` in outputs, and so the wiring, uses the full name. Changing either renames every release: the next deploy installs new releases beside the old ones, which Muster doesn't remove, so uninstall the old ones first, and move a protected release's data by hand (CONCEPT.md section 11) |
-| `helm.wait` / `helm.timeout` / `helm.createNamespace` | bool / duration / bool | `true` / `5m` / `false` | `--wait` and `--timeout` on every helm call; `--create-namespace` on deploys. With `wait`, `muster restart` waits for each restart with `kubectl rollout status --timeout`. A generated pipeline's job timeout is its calls' timeouts added up, plus 10 minutes |
+| `helm.wait` / `helm.timeout` / `helm.createNamespace` | bool / duration / bool | `true` / `5m` / `false` | `--wait` and `--timeout` on every helm call, and on the `kubectl delete namespace` of a teardown; `--create-namespace` on deploys, which an ephemeral environment requires (E002). With `wait`, `muster restart` waits for each restart with `kubectl rollout status --timeout`. A generated pipeline's job timeout is its calls' timeouts added up, plus 10 minutes |
 
 ## 10. Externals and secrets
 
@@ -405,7 +410,7 @@ Muster resolves one whole stack in one environment at a time, in one pass, alway
 4. **Check the versions file** against those members and images.
 5. **Wire requirements.** For each requirement of each `helm` or `mock` cell: the member of the same stack providing the type, through `wiring` if more than one does. Exactly one source; a requirement no member meets is an error (add an external member for it). Resolution stops here if anything so far is an error.
 6. **Build each deployed cell's values**: its layers in order (below), merged into the values Helm gets, and merged over the chart's defaults for `values --explain`.
-7. **Print** the selected cells. `muster deploy`, `uninstall`, `restart` and `rollback` build a call for each `helm` and `mock` cell, and run them with `--yes`; external cells, and every cell in a `gitops` environment, keep their place in the order with a reason instead.
+7. **Print** the selected cells. `muster deploy`, `uninstall`, `restart` and `rollback` build a call for each `helm` and `mock` cell, and run them with `--yes`; external cells, and every cell in a `gitops` environment, keep their place in the order with a reason instead. An uninstall of a whole stack in an ephemeral instance ends by deleting its namespace.
 
 ### Layer order
 
@@ -425,7 +430,7 @@ Muster resolves one whole stack in one environment at a time, in one pass, alway
 
 ### Output
 
-Every command prints to stdout; what Muster may and may not do is its safety model ([CONCEPT.md §11](CONCEPT.md#11-safety-model)). The commands and their output are described in the [README](README.md#commands). The JSON of `releases --json` is a public contract: one object per member, external members included and marked by `mode`. `order` is the position in the stack's member list. A caller that runs other operations itself (restart, rollback) skips `mode: external` and `gitops: true`; `deploy` and `uninstall` apply these rules, and never uninstall `protected: true`.
+Every command prints to stdout; what Muster may and may not do is its safety model ([CONCEPT.md §11](CONCEPT.md#11-safety-model)). The commands and their output are described in the [README](README.md#commands). The JSON of `releases --json` is a public contract: one object per member, external members included and marked by `mode`. `order` is the position in the stack's member list. `ephemeral` says the environment has an instance per branch, and `instance` names the one selected. A caller that runs other operations itself (restart, rollback) skips `mode: external` and `gitops: true`; `deploy` and `uninstall` apply these rules, and never uninstall `protected: true`, except in the teardown of an ephemeral instance, which also deletes its namespace.
 
 ## 12. Validation
 
@@ -486,6 +491,15 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 | P004 | Warning: the environment before runs as its own chart every app this one takes versions for; one it mocks, or runs from a provider or as external, takes versions set directly, without running there first |
 | P005 | Warning: a production environment has a `from` when there are other environments, so nothing reaches it untested |
 | P006 | Warning: `from` names an environment in a later tier. A generated pipeline can't wait for a later stage, so `generate gitlab-ci` refuses it |
+
+**Ephemeral** (`ephemeral: true` on a tier: an instance per branch)
+
+| Code | Rule |
+|---|---|
+| E001 | An ephemeral tier is not production; its environments have no `from`, and no environment's `from` names one |
+| E002 | An ephemeral environment's `namespace` uses `{stack}` and `{instance}`, it sets `helm.createNamespace: true`, and it is not `gitops`; no other environment's `namespace` uses `{instance}` |
+| E003 | An ephemeral environment has no committed `<env>.versions.yaml`: an instance's versions come from the values, and a branch's build is set in its pipeline's checkout |
+| E004 | `--instance` is lowercase letters, digits and `-`, and makes a namespace of at most 63 characters; `releases`, `values`, `deploy`, `uninstall`, `restart` and `rollback` require it in an ephemeral environment, and every command refuses it in any other |
 
 **Disabled** (`disabled: true`)
 

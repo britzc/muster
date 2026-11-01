@@ -1,0 +1,10 @@
+# Fills a sql slot with the Postgres chart in charts/postgres, in the cluster.
+apiVersion: muster/v1alpha1
+type: sql
+chart: postgres
+outputs:
+  host:       "{release}.{namespace}.svc.cluster.local"
+  port:       "5432"
+  database:   "shop"
+  username:   "app"
+  secretName: "{release}"

@@ -250,6 +250,63 @@ members:
 
 In the hello example, `mongodb` is disabled in every environment: it is part of the stack and its version is recorded, but nothing deploys it until web uses it.
 
+## Branch environments
+
+An environment in an `ephemeral` tier has an instance per branch: one environment file, deployed as many times as there are branches, each instance in a namespace of its own and torn down whole when the branch goes. [examples/cache](examples/cache) has one, `preview`:
+
+```yaml
+# muster.yaml
+tiers:
+  - name: development
+    environments: { dev: {} }
+  - name: review
+    ephemeral: true                   # an instance per branch
+    environments: { preview: {} }
+  - name: testing
+    environments: { qa: { from: dev } }
+
+# environments/preview.yaml
+namespace: "{stack}-{env}-{instance}" # a namespace per stack and instance
+helm:
+  createNamespace: true               # each instance's deploy creates it
+```
+
+Every command that prints or acts on its releases names the instance with `--instance` (`-i`), such as the branch's slug. It goes in the namespace for `{instance}`, so wiring follows it: the api in `pr-142` reaches the Postgres and the Redis in `pr-142`:
+
+```console
+$ muster deploy --env preview --stack shop --instance pr-142
+muster: printing only; add --yes to run
+helm upgrade --install shop-db charts/postgres --kube-context minikube --namespace shop-preview-pr-142 --wait --timeout 3m --create-namespace -f -
+helm upgrade --install shop-cache charts/redis --kube-context minikube --namespace shop-preview-pr-142 --wait --timeout 3m --create-namespace -f -
+helm upgrade --install shop-api charts/api --kube-context minikube --namespace shop-preview-pr-142 --wait --timeout 3m --create-namespace -f -
+$ muster uninstall --env preview --stack shop --instance pr-142
+muster: printing only; add --yes to run
+helm uninstall shop-api --kube-context minikube --namespace shop-preview-pr-142 --wait --timeout 3m --ignore-not-found
+helm uninstall shop-cache --kube-context minikube --namespace shop-preview-pr-142 --wait --timeout 3m --ignore-not-found
+helm uninstall shop-db --kube-context minikube --namespace shop-preview-pr-142 --wait --timeout 3m --ignore-not-found
+kubectl delete namespace shop-preview-pr-142 --context minikube --ignore-not-found --wait --timeout 3m
+```
+
+- **A teardown leaves nothing.** Uninstalling a whole stack from an instance removes every release, protected ones too (`shop-db` above), then deletes the namespace, which takes their volumes and anything else in it, such as releases of members since renamed. Uninstalling one app (`--app`) is an ordinary uninstall: the namespace stays, and a protected release with it. A disabled member keeps the namespace, so its release isn't deleted with it. Running a teardown again is fine.
+- **Each instance is its own.** The namespace must contain `{instance}` and `{stack}` (E002), so a teardown deletes only one stack of one instance. An instance name is lowercase letters, digits and `-`, and the namespace it makes must fit Kubernetes' 63 characters (E004): a branch slug can be long, so `mr-$CI_MERGE_REQUEST_IID` is a safe choice.
+- **Outside the release flow.** An ephemeral tier is never production, its environments have no `from`, and no environment takes versions from them (E001). An instance runs the image tags its values give, and a branch's build of one app with `versions set` in the job's checkout, never committed: a committed versions file for an ephemeral environment is an error (E003).
+- **Not GitOps.** Muster deploys and tears down each instance itself (E002).
+- **Required where it matters.** `--instance` is required in an ephemeral environment by `releases`, `values`, `deploy`, `uninstall`, `restart` and `rollback`, and refused in any other environment (E004). `versions set` and `promote` need none: the versions don't depend on the namespace. `muster list environments --ephemeral` lists the ephemeral environments, `--ephemeral=false` the others: a script that deploys every environment it lists needs `--ephemeral=false`.
+
+**In GitLab:** `muster generate gitlab-ci` leaves the ephemeral environments out, so main's pipeline never touches them. `muster generate gitlab-ci --instance <name>` covers only them: a job per stack, running with `--instance`, in GitLab environment `<env>/<instance>` with `on_stop` and `auto_stop_in` (`--auto-stop-in`, default `1 week`), and a stop job per environment. The stop job holds the calls `muster uninstall` makes, written out, with `GIT_STRATEGY: none`, so it runs after the branch is deleted, when there is nothing to check out. GitLab runs it when the branch is deleted or the environment's time is up, and you can run it by hand from the environment's page. `--app <app> --tag <tag>` ships a branch's build of one app to the instance, with the rest of its stack. A branch's pipeline might have:
+
+```yaml
+review-plan:
+  stage: plan
+  rules: [{ if: $CI_MERGE_REQUEST_IID }]
+  script: muster generate gitlab-ci --instance "mr-$CI_MERGE_REQUEST_IID" --auto > review.yml
+  artifacts: { paths: [review.yml] }
+review:
+  stage: deploy
+  rules: [{ if: $CI_MERGE_REQUEST_IID }]
+  trigger: { include: [{ artifact: review.yml, job: review-plan }], strategy: depend }
+```
+
 ## GitLab CI
 
 [examples/hello/.gitlab-ci.yml](examples/hello/.gitlab-ci.yml) is the hello repository's pipeline. It names no environment, stack or app: every one comes from [`muster list --names`](#list), so adding an environment or a stack to the repository adds it to the pipeline, and disabling one takes it out. It deploys [matrices](#matrix-deployments): its `plan` job turns the run's inputs into flags for [`muster generate gitlab-ci`](#matrix-deployments), and runs the child pipeline it prints, a stage per tier and a job per cell.
@@ -323,14 +380,14 @@ An environment hosts a stack when the stack lists it under `environments` in its
 | `muster values --app <app> <selection>` | Prints the values one release gets: the file to pass to `helm -f` |
 | `muster values [--app <app>] <selection> --explain` | The same values over the chart's defaults, with a header per release, for review |
 | `muster deploy [--app <app>] <selection>` | Prints the `helm upgrade --install` calls, in deploy order; `--yes` runs them |
-| `muster uninstall [--app <app>] <selection>` | Prints the `helm uninstall` calls, in reverse order; `--yes` runs them, `--confirm <env>` too for a production environment |
+| `muster uninstall [--app <app>] <selection>` | Prints the `helm uninstall` calls, in reverse order; `--yes` runs them, `--confirm <env>` too for a production environment. A whole stack in an instance of an [ephemeral environment](#branch-environments) also loses its namespace |
 | `muster restart [--app <app>] <selection>` | Prints a `kubectl rollout restart` per release, in order, each followed by a `rollout status` that waits; `--yes` runs them |
 | `muster rollback [--app <app>] <selection>` | Prints the `helm rollback` calls, in reverse order, to each release's previous revision or `--to <revision>`; `--yes` runs them |
 | `muster versions [--app <app>] <selection>` | Prints each release's images, the version each gets and where it comes from; `--json` for scripts |
 | `muster versions set\|promote … --write` | Changes a stack's image versions in one environment (the only file Muster writes) |
 | `muster generate gitlab-ci [--stack <stack> \| --app <app>]` | Prints a GitLab child pipeline for a matrix: a stage per tier, a job per cell ([Matrix deployments](#matrix-deployments)) |
 
-Every command that selects releases takes the same form, `muster <command> --env <env> --stack <stack> [--app <app>]`, and only flags, in any order: Muster reads no environment variables, so a command line always means the same thing. The stack is always named, even when an environment hosts only one, so a command means the same thing after a stack is added. Each selection flag has a short form for typing: `-e`, `-s`, `-a`, and `-t` for `generate gitlab-ci --tag`.
+Every command that selects releases takes the same form, `muster <command> --env <env> --stack <stack> [--app <app>]`, and only flags, in any order: Muster reads no environment variables, so a command line always means the same thing. The stack is always named, even when an environment hosts only one, so a command means the same thing after a stack is added. Each selection flag has a short form for typing: `-e`, `-s`, `-a`, `-i` for `--instance`, and `-t` for `generate gitlab-ci --tag`.
 
 | Selection | Selects |
 |---|---|
@@ -338,6 +395,7 @@ Every command that selects releases takes the same form, `muster <command> --env
 | `--app <app> --env <env> --stack <stack>` | Just that app in that stack |
 | `--env <env> --all-stacks` | Every stack the environment hosts |
 | `--app <app> --env <env> --all-stacks` | That app in every hosted stack that contains it |
+| `--instance <name>` with any of these | The instance of an [ephemeral environment](#branch-environments); required there, refused elsewhere |
 
 **Exit codes:** 0 when the command did what it says. 2 when the command line is wrong: an unknown command or flag, a missing, conflicting or malformed flag or argument, or a name the repository doesn't have where the command line uses it (an environment, stack or app that doesn't exist, a stack the environment doesn't host, an app not in the stack); fix the command. 1 when the command line is fine but the result isn't: the repository has a problem or refuses the change (validation errors, something disabled, a tag the environment doesn't take, nothing to do), or helm or kubectl failed; fix the repository or the cluster.
 
@@ -377,11 +435,12 @@ muster list apps --env qa --mode helm,mock         # what deploying qa installs 
 muster list environments --app web --mode helm     # where web runs a chart
 muster list stacks --app web --env qa --versioned  # where versions set web=… works in qa
 muster list environments --production=false        # the test environments: dev qa (--production: prod)
+muster list environments --ephemeral=false         # those without an instance per branch (--ephemeral: those with)
 ```
 
 | Command | Takes |
 |---|---|
-| `list environments` | `--app <app>`, `--stack <stack>`, `--mode <mode>`, `--versioned`, `--production[=false]` |
+| `list environments` | `--app <app>`, `--stack <stack>`, `--mode <mode>`, `--versioned`, `--production[=false]`, `--ephemeral[=false]` |
 | `list stacks` | `--app <app>`, `--env <env>`, `--mode <mode>`, `--versioned` |
 | `list apps` | `--env <env>`, `--stack <stack>`, `--mode <mode>`, `--versioned` |
 
@@ -420,7 +479,7 @@ The rules are applied once, in Muster:
 - Without `--yes`, nothing runs. With it, the calls run one after the other, from the repository root (chart paths are relative to it), and the first failure stops the rest.
 - `deploy` and `restart` run in member order, `uninstall` and `rollback` in reverse, across the stacks too.
 - External members, and every release in a `gitops: true` environment (owned by the GitOps controller), get no call: only a `# skip` line with the reason. So do [disabled](#disabling-an-environment-a-stack-or-an-app) ones, for every command.
-- A protected release never gets an `uninstall`, and there is no flag to change that. Remove a database by hand.
+- A protected release never gets an `uninstall`, and there is no flag to change that. Remove a database by hand. The one exception is the teardown of an instance of an [ephemeral environment](#branch-environments), which deletes its namespace and everything in it.
 - An uninstall that would change an environment in a `production: true` tier also needs `--confirm <env>`.
 - `uninstall` passes `--ignore-not-found`, so a teardown that stopped half way can simply be run again.
 - Every call names `--kube-context` and `--namespace`, so the same calls work on minikube, EKS or any other cluster.
@@ -494,6 +553,18 @@ hello  nginx    app      1.27.3-alpine  stacks/hello/prod.versions.yaml  no     
 
 The file's rules (fallback to values, which apps take versions, what is checked) are in [SCHEMA.md §10](SCHEMA.md#stacksstackenvversionsyaml).
 
+### Database migrations
+
+A migration, such as Liquibase or Flyway, runs inside the app's own chart as a Helm `pre-install,pre-upgrade` hook Job: Helm runs it before it changes the app's pods, and waits for it. Muster runs no scripts itself, so this is where the step belongs, and it gets what everything else in the chart gets: [examples/cache](examples/cache)'s api has [`charts/api/templates/migrate.yaml`](examples/cache/charts/api/templates/migrate.yaml), which applies [`migrations/changelog.yaml`](examples/cache/charts/api/migrations/changelog.yaml) with Liquibase.
+
+- **The database it migrates is wired.** The api requires `sql`, and the Job takes the host, user and secret from the same values as the app, so it migrates the Postgres chart in dev and qa, RDS in prod, and each branch's own database in preview.
+- **Its image is versioned with the app.** `images: { app: image.tag, migrator: migrations.image.tag }` in `app.yaml` puts the Liquibase image in the versions files, so `versions set api.migrator=…` changes it and `promote` moves it.
+- **A failed migration stops the deploy.** The hook fails, so `helm upgrade` fails and `muster deploy --yes` stops there: the app's pods are not changed, and a generated pipeline commits nothing and goes no further.
+- **The database deploys first**, since the stack lists it before the api and each release waits for the one before.
+- **A rollback doesn't undo a migration.** `muster rollback` rolls back the release, not the schema: keep each change one the previous version of the app can run with (expand, then contract), or roll the schema back with the tool's own command.
+
+A hook, rather than a member of its own: Muster passes `--wait`, which waits for Deployments but not for a plain Job to finish, and Helm can't upgrade a Job in place.
+
 ### Charts in a registry
 
 An app's chart, a provider's or a mock's can stay in an OCI registry such as ECR, or in a classic chart repository, instead of in `charts/` ([SCHEMA.md §1](SCHEMA.md#1-general-rules)):
@@ -551,4 +622,5 @@ The chart turns `apiKey` into a Kubernetes Secret; the value never appears in Mu
 |---|---|
 | [examples/basic](examples/basic) | The smallest useful repository, and the one to copy: two apps (backend and frontend) in one stack, `shop`, in dev and qa (qa promoting from dev), with each app's values, each environment's values and image versions. No providers, mocks, external members, wiring or secrets: add those only when a stack needs them ([GUIDE.md](GUIDE.md#start-small)) |
 | [examples/hello](examples/hello) | A hello world web app with nginx in front of it and a disabled mongodb, one stack in dev, qa and prod, every app's version captured per environment, an API key per environment in SOPS, and a [GitLab pipeline](#gitlab-ci) for matrix deployments |
+| [examples/cache](examples/cache) | One stack whose database and cache are Postgres and Redis in the cluster in dev, qa and each branch's preview, and RDS and ElastiCache in prod: slot apps (`chart: none`), a provider for each, `external` members in prod with their endpoints in `prod.externals.yaml`, the api wired to whichever fills them, its [Liquibase migrations](#database-migrations), and `preview`, an [ephemeral environment](#branch-environments) |
 

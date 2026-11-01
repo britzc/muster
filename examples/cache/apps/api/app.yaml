@@ -1,0 +1,20 @@
+# The api. Its chart is charts/api (the app's name).
+apiVersion: muster/v1alpha1
+images:                      # the image versions files set, and where each tag goes
+  app: image.tag
+  migrator: migrations.image.tag   # Liquibase, which applies the changelog before each deploy
+requires:
+  cache:
+    type: redis
+    values:                  # where each output goes in this app's chart
+      host: cache.host
+      port: cache.port
+      tls:  cache.tls
+  db:
+    type: sql
+    values:
+      host:       database.host
+      port:       database.port
+      database:   database.name
+      username:   database.username
+      secretName: database.existingSecret

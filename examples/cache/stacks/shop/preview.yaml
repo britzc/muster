@@ -1,0 +1,9 @@
+# The shop in a branch's preview: Postgres and Redis in the instance's
+# namespace, small.
+apiVersion: muster/v1alpha1
+members:
+  db:    { provider: postgres }   # dropped with the instance
+  cache: { provider: redis }
+values:
+  cache:                      # the redis chart's values
+    maxmemory: 16mb

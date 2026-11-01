@@ -1,0 +1,7 @@
+image:
+  repository: redis
+  tag: 7.4-alpine
+  pullPolicy: IfNotPresent
+maxmemory: 64mb
+resources: {}
+global: {}

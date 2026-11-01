@@ -1,0 +1,8 @@
+# The shop: an api, and the database and cache it needs, deployed in this
+# order. Each is one member everywhere; what fills it is chosen per environment.
+apiVersion: muster/v1alpha1
+environments: [dev, preview, qa, prod]
+members:
+  - db
+  - cache
+  - api

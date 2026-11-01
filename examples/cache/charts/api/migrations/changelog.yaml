@@ -1,0 +1,21 @@
+# The api's database changes, applied by Liquibase before each install and
+# upgrade (templates/migrate.yaml). Add a changeSet; never edit one that ran.
+databaseChangeLog:
+  - changeSet:
+      id: 1-orders
+      author: shop
+      changes:
+        - createTable:
+            tableName: orders
+            columns:
+              - column: { name: id, type: bigint, autoIncrement: true, constraints: { primaryKey: true } }
+              - column: { name: item, type: varchar(200), constraints: { nullable: false } }
+              - column: { name: created_at, type: timestamp, defaultValueComputed: now() }
+  - changeSet:
+      id: 2-orders-quantity
+      author: shop
+      changes:
+        - addColumn:
+            tableName: orders
+            columns:
+              - column: { name: quantity, type: int, defaultValueNumeric: 1 }

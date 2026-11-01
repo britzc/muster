@@ -1,0 +1,5 @@
+apiVersion: v2
+name: api
+description: A small HTTP api that answers with the cache it is wired to
+type: application
+version: 0.1.0

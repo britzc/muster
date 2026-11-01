@@ -1,0 +1,12 @@
+# The shop in prod: RDS and ElastiCache, created by Terraform. Muster deploys
+# only the api, and wires it to the endpoints in prod.externals.yaml.
+apiVersion: muster/v1alpha1
+members:
+  db:    { mode: external, provider: rds }
+  cache: { mode: external, provider: elasticache }
+values:
+  api:
+    replicaCount: 3
+    resources:
+      requests: { cpu: 100m, memory: 64Mi }
+      limits:   { memory: 128Mi }

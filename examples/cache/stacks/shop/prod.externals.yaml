@@ -1,0 +1,12 @@
+# Outputs of the external members in prod, written by the pipeline that
+# creates them (here Terraform), never by hand or by Muster.
+apiVersion: muster/v1alpha1
+writtenBy: terraform/shop-cache
+writtenAt: 2026-11-02T08:00:00Z
+outputs:
+  db:
+    host: shop.abc123.eu-west-1.rds.amazonaws.com
+    username: shop_app
+    secretName: shop-rds   # the password, put there by External Secrets
+  cache:
+    host: master.shop-cache.abc123.euw1.cache.amazonaws.com

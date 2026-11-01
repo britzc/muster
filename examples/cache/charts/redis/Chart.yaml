@@ -1,0 +1,5 @@
+apiVersion: v2
+name: redis
+description: A single Redis without persistence, for dev and test
+type: application
+version: 0.1.0

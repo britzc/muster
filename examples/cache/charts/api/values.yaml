@@ -1,0 +1,23 @@
+replicaCount: 1
+image:
+  repository: hashicorp/http-echo
+  tag: "1.0"
+  pullPolicy: IfNotPresent
+migrations:
+  image:
+    repository: liquibase/liquibase
+    tag: "4.29.2"
+    pullPolicy: IfNotPresent
+cache:
+  host: ""
+  port: ""
+  tls: ""
+database:
+  host: ""
+  port: ""
+  name: ""
+  username: ""
+  existingSecret: ""
+resources: {}
+global:
+  environment: ""

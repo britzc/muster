@@ -1,0 +1,8 @@
+# An RDS for PostgreSQL instance, created outside Muster (by Terraform).
+# No chart, so its members are external. host, username and secretName come
+# from the externals file.
+apiVersion: muster/v1alpha1
+type: sql
+outputs:
+  port:     "5432"
+  database: "shop"

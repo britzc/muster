@@ -1,0 +1,8 @@
+# The shop in dev: Redis in the cluster.
+apiVersion: muster/v1alpha1
+members:
+  db:    { provider: postgres }
+  cache: { provider: redis }
+values:
+  cache:                      # the redis chart's values
+    maxmemory: 32mb

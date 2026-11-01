@@ -1,0 +1,7 @@
+# The shop's cache: a slot with no chart of its own. Each environment picks
+# the provider that fills it: Redis in the cluster, or ElastiCache.
+# Not protected: a cache holds nothing a teardown must keep.
+apiVersion: muster/v1alpha1
+chart: none
+provides:
+  - type: redis

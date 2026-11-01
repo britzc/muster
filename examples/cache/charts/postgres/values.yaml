@@ -1,0 +1,10 @@
+image:
+  repository: postgres
+  tag: 16.4-alpine
+  pullPolicy: IfNotPresent
+database: shop
+username: app
+password: dev-only-password   # dev and test only: prod's database is RDS
+storage: 1Gi
+resources: {}
+global: {}

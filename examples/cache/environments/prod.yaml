@@ -1,0 +1,10 @@
+# prod: where it deploys, and values every release in prod gets.
+apiVersion: muster/v1alpha1
+cluster:
+  context: prod-eks           # the prod cluster's kube context
+namespace: "{stack}"
+helm:
+  timeout: 10m
+values:
+  global:
+    environment: prod

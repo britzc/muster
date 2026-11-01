@@ -26,11 +26,13 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | When | Add | See |
 |---|---|---|
 | An app needs another's address or a database's connection | `requires` and `provides`, which wire themselves | [CONCEPT.md §4](CONCEPT.md#4-dependencies-members-providers-externals-and-mocks) |
-| A database is Postgres in one environment and MSSQL in another | a provider | [SCHEMA.md §6](SCHEMA.md#6-providers-providersproviderprovideryaml) |
-| Part of the stack runs outside the cluster (RDS, EC2) | an `external` member | [CONCEPT.md §4](CONCEPT.md#4-dependencies-members-providers-externals-and-mocks) |
+| A database is Postgres in one environment and MSSQL in another | a provider | [SCHEMA.md §6](SCHEMA.md#6-providers-providersproviderprovideryaml), [examples/cache](examples/cache) (Redis, ElastiCache in prod) |
+| Part of the stack runs outside the cluster (RDS, ElastiCache, EC2) | an `external` member | [CONCEPT.md §4](CONCEPT.md#4-dependencies-members-providers-externals-and-mocks), [examples/cache](examples/cache) |
 | A test environment fakes an integration | a `mock` member | [CONCEPT.md](CONCEPT.md#members-and-their-modes) |
 | A secret per environment | a SOPS file | [README](README.md#secrets-sops) |
 | A chart is published, not in the repository | `chart: oci://…` | [README](README.md#charts-in-a-registry) |
+| A database migration (Liquibase, Flyway) with each deploy | a `pre-install,pre-upgrade` hook Job in the app's chart, its image under `images` | [README](README.md#database-migrations), [examples/cache](examples/cache) |
+| A deployment per branch, torn down when the branch goes | an `ephemeral` tier, and `--instance` | [README](README.md#branch-environments), [examples/cache](examples/cache) |
 
 ## Tasks
 
@@ -53,7 +55,8 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Roll back fast | `muster rollback --app web --env prod --stack hello --yes` (the cluster only: the next deploy brings the repository's version back; a second rollback undoes the first, so a generated rollback job always waits for a person) |
 | Roll back for good | `git revert` the commit that changed `stacks/hello/prod.versions.yaml` (`git log -p` shows it), then `muster deploy --env prod --stack hello --yes`; or ship the previous version from the start of the chain |
 | Freeze an environment, a stack or an app | `disabled: true` and a `reason` in its file, committed ([README](README.md#disabling-an-environment-a-stack-or-an-app)) |
-| Tear down | `muster uninstall --env qa --stack hello --yes` (`--confirm prod` for production; databases are never removed) |
+| Tear down | `muster uninstall --env qa --stack hello --yes` (`--confirm prod` for production; databases are never removed, except with a branch's instance) |
+| Deploy a branch, and tear it down | `muster deploy --env preview --stack shop --instance pr-142 --yes`, then `muster uninstall --env preview --stack shop --instance pr-142 --yes`, which also deletes its namespace ([README](README.md#branch-environments)); in CI, `muster generate gitlab-ci --instance pr-142 --auto` |
 
 Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm` or `kubectl` calls they would make: run them that way first.
 
@@ -64,8 +67,9 @@ Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm
 | An app | `charts/<app>/` (or `chart: oci://…`), `apps/<app>/app.yaml`, `apps/<app>/values.yaml` | List it in a stack's `stack.yaml` |
 | A stack | `stacks/<stack>/stack.yaml` with its members in deploy order, and the environments it runs in | `stacks/<stack>/<env>.yaml` where something differs |
 | An environment | `environments/<env>.yaml`: kube context, namespace, values | its name under `environments` in each stack it hosts (and `stacks/<stack>/<env>.yaml` where something differs), an entry under a tier in `muster.yaml` for its kind and where it sits in the chain, and its versions by `muster versions promote` (or `set`, if it is first) |
+| An environment per branch | an environment as above, in a tier with `ephemeral: true`, with `{stack}` and `{instance}` in its namespace and `helm.createNamespace: true`, and no `from` or versions file | `muster validate` |
 
-`muster validate` says what is missing. The GitLab pipeline picks up new environments, stacks and apps by itself ([README](README.md#gitlab-ci)).
+`muster validate` says what is missing. The GitLab pipeline picks up new environments, stacks and apps by itself ([README](README.md#gitlab-ci)); an ephemeral environment only in a pipeline generated with `--instance` ([README](README.md#branch-environments)).
 
 ## When a command fails
 
