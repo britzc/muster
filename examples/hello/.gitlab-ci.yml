@@ -3,7 +3,7 @@
 # the repository adds it to the pipeline.
 #
 #   merge request   validate, and print every deploy as the matrix's jobs
-#                   (--yes=false: nothing changes, no deployment recorded)
+#                   (no --yes: nothing changes, no deployment recorded)
 #   main            deploy every stack along the chain dev, qa, prod: each
 #                   stack in an environment only after it deployed in the one
 #                   before; dev and qa right away, prod as manual jobs
@@ -117,7 +117,7 @@ check:
 # job per cell, each deploy after the same stack's in the environment before
 # (muster generate gitlab-ci --help).
 #   merge request  every stack in every environment, printed only
-#                (--yes=false): each job shows the helm calls a deploy would
+#                (no --yes): each job shows the helm calls a deploy would
 #                make, so a review sees what the change does where
 #   main         every stack in every environment; jobs start themselves
 #                except in manual environments (--auto)
@@ -163,9 +163,9 @@ plan:
     - |
       case "$CI_PIPELINE_SOURCE" in
         merge_request_event)
-          set -- --yes=false --auto ;;
+          set -- --auto ;; # no --yes: the jobs only print their calls
         trigger)
-          set -- --app "$APP" --auto --commit ci/versions.sh
+          set -- --yes --app "$APP" --auto --commit ci/versions.sh
           if [ "${ACTION:-}" = rollback ]; then set -- "$@" --action rollback --current "${CURRENT:-}"; fi
           if [ -n "${STACK:-}" ]; then set -- "$@" --stack "$STACK" --by cell; fi
           if [ -n "${TAG:-}" ]; then set -- "$@" --tag "$TAG${DIGEST:+@$DIGEST}"; fi
@@ -173,7 +173,7 @@ plan:
           if [ -n "${TO:-}" ]; then set -- "$@" --to "$TO"; fi
           if [ "${ACCEPT:-}" = true ]; then set -- "$@" --accept; fi ;;
         *)
-          set -- --action "$ACTION"
+          set -- --yes --action "$ACTION"
           if [ -n "$STACK_INPUT" ]; then set -- "$@" --stack "$STACK_INPUT"; fi
           if [ -n "$APP_INPUT" ]; then set -- "$@" --app "$APP_INPUT"; fi
           if [ "$DEPLOY" = cell ] || { [ -n "$STACK_INPUT" ] && [ -n "$APP_INPUT" ]; }; then

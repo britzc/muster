@@ -48,7 +48,7 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Ship an init container's or a sidecar's version | `muster versions set web.sidecar=1.37.0 --env dev --stack hello --write` (`web=…` alone sets web's image named `app`) |
 | Pin an image by digest | `muster versions set web=1.2.0@sha256:… …` |
 | Promote to the next environment | `muster versions promote --env qa --stack hello --write` (from dev, qa's `from` in `muster.yaml`), `muster deploy --env qa --stack hello --yes`, and commit once it passes; then the same for prod, from qa |
-| Ship through CI | `muster generate gitlab-ci --app web --tag 1.2.0 --auto --commit ci/versions.sh` writes the pipeline: dev, then qa, then prod, each committing once it passed. `--to dev` stops in dev; a later `--action promote` takes it on |
+| Ship through CI | `muster generate gitlab-ci --yes --app web --tag 1.2.0 --auto --commit ci/versions.sh` writes the pipeline: dev, then qa, then prod, each committing once it passed. `--to dev` stops in dev; a later `--action promote` takes it on |
 | Put environments in order | `prod: { from: qa }` under its tier in `muster.yaml`: prod deploys after qa and takes versions only from it. `manual`, on the tier or the environment, says whether a person starts its jobs (default: the tier's `production`) |
 | Deploy a stack, or one app | `muster deploy --env qa --stack hello --yes`, `muster deploy --app web --env qa --stack hello --yes` |
 | Restart | `muster restart --app web --env qa --stack hello --yes` |
@@ -58,7 +58,7 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Tear down | `muster uninstall --env qa --stack hello --yes` (`--confirm prod` for production; databases are never removed, except with a branch's instance) |
 | Deploy a branch, and tear it down | `muster deploy --env preview --stack shop --instance pr-142 --yes`, then `muster uninstall --env preview --stack shop --instance pr-142 --yes`, which also deletes its namespace ([README](README.md#branch-environments)); in CI, `muster generate gitlab-ci --instance pr-142 --auto` |
 
-Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm` or `kubectl` calls they would make: run them that way first.
+Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm` or `kubectl` calls they would make: run them that way first. The same holds for a generated pipeline: its jobs only print unless it was generated with `--yes`, and `versions set`, `promote` and `rollback` only print the new file unless given `--write`.
 
 ## Adding things
 
