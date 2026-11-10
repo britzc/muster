@@ -46,10 +46,10 @@ $ muster validate
 ok: 3 environments, 1 stacks, 3 apps
 
 $ muster list environments
-ENVIRONMENT  DISABLED  REASON
-dev          no        -
-qa           no        -
-prod         no        -
+ENVIRONMENT  TIER         CONTEXT   DISABLED  REASON
+dev          development  minikube  no        -
+qa           testing      minikube  no        -
+prod         production   minikube  no        -
 
 $ muster releases --env dev --stack hello
 STACK  ORDER  APP      RELEASE        MODE  CHART           NAMESPACE  CONTEXT   PROTECTED  SECRETS                            DISABLED  REASON
@@ -375,7 +375,7 @@ An environment hosts a stack when the stack lists it under `environments` in its
 | Command | What it does |
 |---|---|
 | `muster validate` | Prints every problem in the repository, with its rule code; exits 1 if there are errors, so it works as a CI gate |
-| `muster list environments\|stacks\|apps` | Prints each, and whether it is disabled and why; `--names` for the ones not disabled, one per line, for scripts; `--json` |
+| `muster list environments\|stacks\|apps` | Prints each, and whether it is disabled and why; `--names` for the ones not disabled, one per line, for scripts; `--json`. For environments also the tier and kube context; `--env <env> --get context` prints the context alone |
 | `muster releases [--app <app>] <selection>` | Prints the releases in deploy order, with everything needed to act on them; `--json` for scripts |
 | `muster values --app <app> <selection>` | Prints the values one release gets: the file to pass to `helm -f` |
 | `muster values [--app <app>] <selection> --explain` | The same values over the chart's defaults, with a header per release, for review |
@@ -417,7 +417,14 @@ nginx
 web
 ```
 
-`--names` prints only the ones not disabled, one per line: the form for scripts and pipelines. `--json` gives an array of `name`, `disabled` and `reason`.
+`--names` prints only the ones not disabled, one per line: the form for scripts and pipelines. `--json` gives an array of `name`, `disabled` and `reason`. For environments, the table also gives each one's tier and kube context, and `--json` its `tier`, `from`, `production`, `ephemeral`, `gitops` and `context`.
+
+`--get <field>` prints one of those for the environment `--env` names, alone on a line: `context`, `tier`, `from`, `production`, `ephemeral` or `gitops`. It is for a pipeline step that needs the value before Muster runs, such as a cloud CLI writing the kubeconfig, or `kubectl`. It fails when the environment has no value for the field, so a script never runs `kubectl --context ""` against whatever context is active:
+
+```bash
+ctx=$(muster list environments --env prod --get context)   # prod-eks
+aws eks update-kubeconfig --name prod --alias "$ctx"
+```
 
 ```
 muster list environments                           # every environment, in deploy order
@@ -436,11 +443,12 @@ muster list environments --app web --mode helm     # where web runs a chart
 muster list stacks --app web --env qa --versioned  # where versions set web=… works in qa
 muster list environments --production=false        # the test environments: dev qa (--production: prod)
 muster list environments --ephemeral=false         # those without an instance per branch (--ephemeral: those with)
+muster list environments --env prod --get context   # prod's kube context, alone on a line
 ```
 
 | Command | Takes |
 |---|---|
-| `list environments` | `--app <app>`, `--stack <stack>`, `--mode <mode>`, `--versioned`, `--production[=false]`, `--ephemeral[=false]` |
+| `list environments` | `--env <env>`, `--app <app>`, `--stack <stack>`, `--mode <mode>`, `--versioned`, `--production[=false]`, `--ephemeral[=false]`, `--get <field>` (with `--env`) |
 | `list stacks` | `--app <app>`, `--env <env>`, `--mode <mode>`, `--versioned` |
 | `list apps` | `--env <env>`, `--stack <stack>`, `--mode <mode>`, `--versioned` |
 
