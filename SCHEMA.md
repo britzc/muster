@@ -97,7 +97,7 @@ tiers:                                # in deploy order: a stage each in a gener
 | `tiers[].name` | name | — | A valid DNS-1123 label (S002), each tier once (S001) |
 | `tiers[].production` | bool | `false` | Its environments are production: `mock` members are an error (X003), `muster uninstall --yes` also needs `--confirm <env>`, and P005 warns when one takes its changes from nowhere |
 | `tiers[].ephemeral` | bool | `false` | Its environments have an instance per branch, named with `--instance`, each stack of each in a namespace of its own that the instance's teardown deletes ([README](README.md#branch-environments)). Never production, no `from` to or from them (E001), and section 9 has what their files need (E002) |
-| `tiers[].manual` | bool | `production` | A person starts each of its environments' jobs in a generated pipeline, even with `--auto`. A rollback job always waits for a person, wherever it runs |
+| `tiers[].manual` | bool | `production` | A person starts each of its environments' jobs in a generated pipeline, even with `--auto` |
 | `tiers[].environments` | map | — | The tier's environments, by name. Every `environments/<env>.yaml` is in exactly one tier, and every name here has that file (S001, S004) |
 | `tiers[].environments.<env>.from` | environment name | — | The environment before this one: the start of a chain when left out. This one comes after it in deploy order, a generated pipeline's deploy job here needs the same stack's job there, and versions reach this one only by `versions promote` from it (V008). It hosts every stack this one hosts (P003, a warning) and runs as its own chart every app this one takes versions for (P004, a warning); an app it doesn't is set here directly. No loops (P002), and not from a later tier (P006, a warning: a pipeline can't wait for a later stage, so `generate gitlab-ci` refuses it). Two environments may promote from the same one |
 | `tiers[].environments.<env>.manual` | bool | the tier's `manual` | The same as the tier's, for this environment only |
@@ -332,7 +332,7 @@ values:                               # every release in qa
 | `disabled` / `reason` | bool / string | `false` | `disabled: true` turns the whole environment off for changes; `reason` says why, and is required with it ([Disabling](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | `versions.tags` | regular expression | any tag | The image tags the environment takes, matched in full, e.g. `'[0-9]+\.[0-9]+\.[0-9]+'` for release tags only. Checked for every image of an app's own chart, wherever its tag comes from: the versions file, a values file or the chart's default (V004) |
 | `cluster.context` | string | — | Required unless `gitops` is `true`. `muster list environments --env <env> --get context` prints it, for a pipeline step that writes the kubeconfig |
-| `namespace` | string | — | May use `{stack}` and `{env}`. In an ephemeral tier it must use `{stack}` and `{instance}`, the instance `--instance` names, so a teardown deletes one stack of one instance; elsewhere `{instance}` is an error (E002) |
+| `namespace` | string | — | May use `{stack}` and `{env}`. In an ephemeral tier it must use `{stack}` and `{instance}`, the instance `--instance` names, so a teardown deletes one stack of one instance; elsewhere `{instance}` is an error (E002). A namespace belongs to one repository: a teardown deletes all of it, and Muster can't see what another repository put there ([CONCEPT](CONCEPT.md) section 11) |
 | `release.prefix` / `release.suffix` | string / string | `""` / `""` | Added to every release name in the environment, like a Kustomize overlay's `namePrefix` and `nameSuffix`: `<prefix><stack>-<app><suffix>`. Lowercase letters, digits and `-`; a prefix doesn't start with `-` and a suffix doesn't end with it (S002). `{release}` in outputs, and so the wiring, uses the full name. Changing either renames every release: the next deploy installs new releases beside the old ones, which Muster doesn't remove, so uninstall the old ones first, and move a protected release's data by hand (CONCEPT.md section 11) |
 | `helm.wait` / `helm.timeout` / `helm.createNamespace` | bool / duration / bool | `true` / `5m` / `false` | `--wait` and `--timeout` on every helm call, and on the `kubectl delete namespace` of a teardown; `--create-namespace` on deploys, which an ephemeral environment requires (E002). With `wait`, `muster restart` waits for each restart with `kubectl rollout status --timeout`. A generated pipeline's job timeout is its calls' timeouts added up, plus 10 minutes |
 
@@ -374,6 +374,9 @@ versions:
     chart: 1.4.0               # payments' chart is in a registry (app.yaml: chart: oci://…)
   billing:
     app: latest
+rejected:                      # written by versions rollback: never written back without --accept
+  payments:
+    app: [1.4.3]
 ```
 
 - **Keyed by app, then image** (the app's `images`). In `set`, the image can be left out when the app has only one, or has one named `app`, which it then means: `payments=1.4.2` is `payments.app=1.4.2`. Name the others: `payments.migrator=1.4.2`.
@@ -383,7 +386,8 @@ versions:
 - **`chart` is the version of the app's chart, when it is in a registry** (section 1), set with `versions set payments.chart=1.4.0` and copied by `promote` like a tag. Such an app needs it in every environment that hosts it (V006); an app whose chart is in `charts/` has none. It is an exact chart version, and `versions.tags` doesn't apply to it.
 - **It only applies to an app running its own chart** that names `images` or whose chart is in a registry: never to a mock or to a provider's chart filling a slot. `muster list … --versioned` gives where that holds.
 - **It moves along the chain** (§3, `from`). In an environment with a `from`, `set` is refused for every app that environment runs as its own chart, and `promote` copies from it alone, which `--from` defaults to (V008). Without one, `promote` needs `--from`.
-- `set` and `promote` print the new file; with `--write` they replace it atomically.
+- **A rollback goes straight to the environment, and rejects what it replaces.** `muster versions rollback payments=1.4.2 --current 1.4.3` is the one change an environment with a `from` takes directly. It records `1.4.3` under `rejected`, keyed like `versions`, and is refused when the environment doesn't run the version `--current` names (V010); in a production environment it needs `--confirm <env>` to write. A rejected version is never written back without `--accept`: `set` and a named `promote` refuse it, promoting every app keeps that app's versions with a warning, and `validate` and `deploy` refuse a file whose version is rejected (V009). `--accept` writes it and removes it from `rejected`.
+- `set`, `promote` and `rollback` print the new file; with `--write` they replace it atomically.
 
 ### `stacks/<stack>/<env>.<app>.secrets.yaml`
 
@@ -479,7 +483,9 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 | V005 | Warning: the environment's `values` or the stack's `values.<app>` for the same environment also set an image's tag path. The versions file wins, so remove one. A tag in `apps/<app>/values.yaml` is the fallback and is not reported |
 | V006 | An app whose own chart is in a registry has `<app>.chart` in the versions file of every environment that hosts it, an exact chart version; an app whose chart is in `charts/` has none |
 | V007 | Each image of an app whose chart is in a registry gets its tag from the versions file or a values file, never the chart's default, which Muster can't read |
-| V008 | An environment with a `from` takes versions only by `promote` from that environment: `set` is refused for an app the environment before runs as its own chart, and `promote --from` any other environment is refused |
+| V008 | An environment with a `from` takes versions only by `promote` from that environment, or by `rollback`: `set` is refused for an app the environment before runs as its own chart, and `promote --from` any other environment is refused |
+| V009 | No version in the file is one it lists under `rejected` (a rollback rejected it); every app and image under `rejected` is one `versions` could hold. `set`, `promote` and `rollback` write a rejected version only with `--accept`, which removes it from `rejected` |
+| V010 | `versions rollback` replaces the version `--current` names, and only when the environment runs it: nothing changes when it runs another, or none |
 
 **Promotion** (`from` in `muster.yaml`, the order of environments)
 

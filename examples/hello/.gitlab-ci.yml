@@ -7,9 +7,13 @@
 #   main            deploy every stack along the chain dev, qa, prod: each
 #                   stack in an environment only after it deployed in the one
 #                   before; dev and qa right away, prod as manual jobs
-#   Run pipeline    choose what to deploy, uninstall, restart, roll back or
-#                   promote; manual jobs to start
-#   trigger         an app's pipeline ships a new image (see plan below)
+#   Run pipeline    choose what to deploy, uninstall, restart, promote or
+#                   roll back; manual jobs to start
+#   API             the same inputs, from another system such as a customer
+#                   app (POST /projects/:id/pipeline with inputs); jobs start
+#                   themselves except in manual environments
+#   trigger         an app's pipeline ships a new image, or rolls one back
+#                   (see plan below)
 #   schedule        a pipeline schedule that sets the action input to promote
 #                   promotes along the chain, e.g. nightly into qa
 #
@@ -40,6 +44,15 @@
 #     context, e.g. "platform/agents:qa", and GitLab provides the kubeconfig; or
 #   - a CI/CD variable KUBECONFIG of type File, holding contexts with the
 #     names used in environments/*.yaml.
+# Each environment can be a different cluster: every job deploys to one
+# environment and names its context. A step that needs the context before
+# Muster runs, such as a login that writes the kubeconfig, gets it with
+#   muster list environments --env "${CI_ENVIRONMENT_NAME%%/*}" --get context
+# (%%/* drops a branch instance's name: preview/pr-142 is preview). It fails
+# when the environment names no context, so kubectl never falls back to the
+# active one. The child pipeline's jobs don't inherit default: or
+# before_script from this file, so they can't run such a step yet: give them
+# the kubeconfig with one of the two ways above.
 #
 # Shipping and promoting commits stacks/<stack>/<env>.versions.yaml back to
 # the repository, once each environment's deploy has passed: ci/versions.sh
@@ -49,8 +62,8 @@
 spec:
   inputs:
     action:
-      description: Deploy, uninstall (protected releases, like databases, are always kept), restart, roll back to each release's previous revision, or promote each environment's versions from the one before and deploy them
-      options: [deploy, uninstall, restart, rollback, promote]
+      description: Deploy, uninstall (protected releases, like databases, are always kept), restart, promote each environment's versions from the one before and deploy them, or roll an app back to an older version in one environment (app, version, current and to)
+      options: [deploy, uninstall, restart, promote, rollback]
       default: deploy
     deploy:
       description: A job per stack, per app (in every stack that has it), or per cell (an app in one stack); the cells of a named stack or app with cell, and always when both are named
@@ -63,11 +76,18 @@ spec:
       description: "One app, through every environment that deploys it; empty for every app"
       default: ""
     version:
-      description: "With an app: a tag[@digest] to deploy in dev instead of the repository's version, for testing; not committed"
+      description: "With an app: a tag[@digest] to deploy in dev instead of the repository's version, for testing, not committed; with rollback, the older version to go back to"
+      default: ""
+    current:
+      description: "With rollback: the version it replaces, as you last saw it; nothing changes where the environment runs another"
       default: ""
     to:
-      description: "Only this environment and the ones before it on its chain, e.g. qa for dev and qa; empty for every environment"
+      description: "Only this environment and the ones before it on its chain, e.g. qa for dev and qa; empty for every environment. With rollback, the environment to roll back"
       default: ""
+    accept:
+      description: "Write a version a rollback rejected: promote or ship it again, or roll back to it"
+      type: boolean
+      default: false
 ---
 
 default:
@@ -105,6 +125,9 @@ check:
 #                promote it to qa, deploy, commit; prod waits for a person.
 #                A failed deploy commits nothing and stops what comes after.
 #                TO stops it at an environment (TO=dev: dev only).
+#                ACTION=rollback: APP back to TAG in TO alone, replacing
+#                CURRENT, which TO then rejects: no promote brings it back.
+#                ACCEPT=true writes a rejected version all the same.
 #   schedule     promote along the chain, starting itself where it may
 #   Run pipeline the inputs' choice, every job manual:
 #     stack              a job per stack each environment hosts
@@ -116,9 +139,15 @@ check:
 #                        committed)
 #     promote            a job per stack each environment with a from
 #                        (muster.yaml) hosts: promote, deploy, commit
+#     rollback           a job in to: the app back to version, rejecting
+#                        current; deploy, commit. In production, starting
+#                        the job confirms it
+#   API          the inputs, as Run pipeline, with jobs that start themselves
+#                except in manual environments
 # Off the default branch only the non-production environments
-# (--production=false), and never SKIP_ENVIRONMENTS. A rollback job always
-# waits for a person; every job has a timeout from the helm timeouts it runs.
+# (--production=false), and never SKIP_ENVIRONMENTS. Every job has a timeout
+# from the helm timeouts it runs. A rejected version (after a rollback) is
+# kept out of its environment until a request accepts it (accept, ACCEPT).
 plan:
   stage: check
   variables:
@@ -127,7 +156,9 @@ plan:
     STACK_INPUT: $[[ inputs.stack ]]
     APP_INPUT: $[[ inputs.app ]]
     VERSION: $[[ inputs.version ]]
+    CURRENT_INPUT: $[[ inputs.current ]]
     TO_INPUT: $[[ inputs.to ]]
+    ACCEPT_INPUT: $[[ inputs.accept ]]
   script:
     - |
       case "$CI_PIPELINE_SOURCE" in
@@ -135,10 +166,12 @@ plan:
           set -- --yes=false --auto ;;
         trigger)
           set -- --app "$APP" --auto --commit ci/versions.sh
+          if [ "${ACTION:-}" = rollback ]; then set -- "$@" --action rollback --current "${CURRENT:-}"; fi
           if [ -n "${STACK:-}" ]; then set -- "$@" --stack "$STACK" --by cell; fi
           if [ -n "${TAG:-}" ]; then set -- "$@" --tag "$TAG${DIGEST:+@$DIGEST}"; fi
           if [ -n "${CHART:-}" ]; then set -- "$@" --chart "$CHART"; fi
-          if [ -n "${TO:-}" ]; then set -- "$@" --to "$TO"; fi ;;
+          if [ -n "${TO:-}" ]; then set -- "$@" --to "$TO"; fi
+          if [ "${ACCEPT:-}" = true ]; then set -- "$@" --accept; fi ;;
         *)
           set -- --action "$ACTION"
           if [ -n "$STACK_INPUT" ]; then set -- "$@" --stack "$STACK_INPUT"; fi
@@ -149,8 +182,10 @@ plan:
             set -- "$@" --by "$DEPLOY"
           fi
           if [ -n "$VERSION" ]; then set -- "$@" --tag "$VERSION"; fi
-          if [ "$ACTION" = promote ]; then set -- "$@" --commit ci/versions.sh; fi
+          if [ -n "$CURRENT_INPUT" ]; then set -- "$@" --current "$CURRENT_INPUT"; fi
+          if [ "$ACTION" = promote ] || [ "$ACTION" = rollback ]; then set -- "$@" --commit ci/versions.sh; fi
           if [ -n "$TO_INPUT" ]; then set -- "$@" --to "$TO_INPUT"; fi
+          if [ "$ACCEPT_INPUT" = true ]; then set -- "$@" --accept; fi
           if [ "$CI_PIPELINE_SOURCE" != web ]; then set -- "$@" --auto; fi ;;
       esac
       # Printing changes nothing, so a merge request shows production too.
@@ -164,7 +199,7 @@ plan:
     paths: [matrix.yml]
   rules: &matrix
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api" || $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     # From an app's pipeline, TAG is the app's image (the one named app when it
     # has several; set the others by name with muster versions set
@@ -175,6 +210,10 @@ plan:
     #     -F "variables[APP]=payments" -F "variables[TAG]=1.4.2" -F "variables[DIGEST]=sha256:…" \
     #     -F "variables[CHART]=1.4.2" -F "variables[TO]=qa" \
     #     https://gitlab.example.com/api/v4/projects/<id>/trigger/pipeline
+    # Rolling back takes ACTION=rollback, TAG the older version, CURRENT the
+    # one it replaces, and TO the environment:
+    #     -F "variables[ACTION]=rollback" -F "variables[APP]=payments" \
+    #     -F "variables[TAG]=1.4.1" -F "variables[CURRENT]=1.4.2" -F "variables[TO]=prod"
     - if: $CI_PIPELINE_SOURCE == "trigger" && $APP && ($TAG || $CHART)
 
 matrix:

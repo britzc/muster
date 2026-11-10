@@ -52,8 +52,8 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Put environments in order | `prod: { from: qa }` under its tier in `muster.yaml`: prod deploys after qa and takes versions only from it. `manual`, on the tier or the environment, says whether a person starts its jobs (default: the tier's `production`) |
 | Deploy a stack, or one app | `muster deploy --env qa --stack hello --yes`, `muster deploy --app web --env qa --stack hello --yes` |
 | Restart | `muster restart --app web --env qa --stack hello --yes` |
-| Roll back fast | `muster rollback --app web --env prod --stack hello --yes` (the cluster only: the next deploy brings the repository's version back; a second rollback undoes the first, so a generated rollback job always waits for a person) |
-| Roll back for good | `git revert` the commit that changed `stacks/hello/prod.versions.yaml` (`git log -p` shows it), then `muster deploy --env prod --stack hello --yes`; or ship the previous version from the start of the chain |
+| Roll back | `muster versions rollback web=1.0.0 --current 1.1.0 --env prod --stack hello --confirm prod --write`, deploy, commit; or a pipeline with `ACTION=rollback`. prod then rejects 1.1.0, so no promote brings it back; `--accept` takes it back ([README](README.md#rolling-back)) |
+| Roll back fast, in the cluster only | `muster rollback --app web --env prod --stack hello --yes`: helm's previous revision, until the next deploy brings the repository's version back |
 | Freeze an environment, a stack or an app | `disabled: true` and a `reason` in its file, committed ([README](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | Tear down | `muster uninstall --env qa --stack hello --yes` (`--confirm prod` for production; databases are never removed, except with a branch's instance) |
 | Deploy a branch, and tear it down | `muster deploy --env preview --stack shop --instance pr-142 --yes`, then `muster uninstall --env preview --stack shop --instance pr-142 --yes`, which also deletes its namespace ([README](README.md#branch-environments)); in CI, `muster generate gitlab-ci --instance pr-142 --auto` |
