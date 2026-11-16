@@ -1,4 +1,5 @@
 apiVersion: muster/v1alpha1
+bases: [temp-base]              # what each branch's instance is built from; never deployed itself
 tiers:                          # kinds of environment, in deploy order: a pipeline stage each
   - name: development
     environments:
@@ -6,7 +7,7 @@ tiers:                          # kinds of environment, in deploy order: a pipel
   - name: review
     ephemeral: true             # an instance per branch: muster … --instance <branch>
     environments:
-      preview: {}
+      temp: { base: temp-base } # no files of its own: all from temp-base
   - name: testing
     environments:
       qa: { from: dev }         # qa takes only what passed in dev

@@ -1,5 +1,5 @@
-# The shop in a branch's preview: Postgres and Redis in the instance's
-# namespace, small.
+# The shop in each branch's instance: Postgres and Redis in the instance's
+# namespace, small, where prod has RDS and ElastiCache.
 apiVersion: muster/v1alpha1
 members:
   db:    { provider: postgres }   # dropped with the instance

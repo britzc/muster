@@ -1,5 +1,5 @@
-# preview: an instance per branch, each stack in a namespace of its own, which
-# the instance's teardown deletes.
+# temp-base: what temp's instances are built from, one per branch, each
+# stack in a namespace of its own, which the instance's teardown deletes.
 apiVersion: muster/v1alpha1
 cluster:
   context: minikube           # point this at your review cluster's kube context
@@ -9,4 +9,4 @@ helm:
   createNamespace: true       # each instance creates its namespace
 values:
   global:
-    environment: preview
+    environment: temp

@@ -48,7 +48,7 @@
 # environment and names its context. A step that needs the context before
 # Muster runs, such as a login that writes the kubeconfig, gets it with
 #   muster list environments --env "${CI_ENVIRONMENT_NAME%%/*}" --get context
-# (%%/* drops a branch instance's name: preview/pr-142 is preview). It fails
+# (%%/* drops a branch instance's name: temp/pr-142 is temp). It fails
 # when the environment names no context, so kubectl never falls back to the
 # active one. The child pipeline's jobs don't inherit default: or
 # before_script from this file, so they can't run such a step yet: give them

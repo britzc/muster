@@ -36,10 +36,11 @@ apps/<app>/values.yaml                    # the app's values, everywhere (plain 
 stacks/<stack>/stack.yaml                 # members in deploy order, wiring
 stacks/<stack>/<env>.yaml                 # this stack in <env>: member modes, each member's values
 stacks/<stack>/<env>.externals.yaml       # outputs of external members in <env>, written by other tools
-stacks/<stack>/<env>.versions.yaml        # image versions to deploy in <env>, written by muster versions --write
+stacks/<stack>/<env>.versions.yaml        # image versions to deploy in <env>, written by muster versions --write; none for a base
 stacks/<stack>/<env>.<app>.secrets.yaml   # SOPS-encrypted values for one app in <env>
 
 environments/<env>.yaml                   # kube context, namespace, Helm settings, values for every release in <env>
+environments/<base>.yaml                  # a base: what an ephemeral environment is built from (section 3); its stack files go by its name too
 
 providers/<provider>/provider.yaml        # optional: user-defined providers
 providers/<provider>/values.yaml          # optional: defaults for a provider's chart
@@ -72,6 +73,7 @@ The release flow: the kinds of environment (tiers) in deploy order, the environm
 
 ```yaml
 apiVersion: muster/v1alpha1
+bases: [temp-base]                    # what ephemeral environments are built from; never deployed
 tiers:                                # in deploy order: a stage each in a generated pipeline
   - name: development
     environments:
@@ -79,7 +81,7 @@ tiers:                                # in deploy order: a stage each in a gener
   - name: review
     ephemeral: true                   # an instance per branch: commands take --instance
     environments:
-      preview: {}
+      temp: { base: temp-base }       # its files layer over temp-base's
   - name: testing
     environments:
       qa: { from: dev }               # qa deploys after dev, and takes versions only from it
@@ -93,14 +95,16 @@ tiers:                                # in deploy order: a stage each in a gener
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
+| `bases` | list of names | — | Files that ephemeral environments are built from, each declared once (S001), a valid name (S002), with its `environments/<base>.yaml` (S004), and no environment (E005). A base is never deployed, listed or named with `--env`. Its stack files go by its name, as an environment's do: `stacks/<stack>/<base>.yaml`, `.versions.yaml`, `.externals.yaml` and `.<app>.secrets.yaml`, in the folders of stacks that run in an environment built from it (S005) |
 | `tiers` | list | — | Required. The kinds of environment, in deploy order. A generated pipeline has a stage per tier, so environments of one tier share a stage. A tier named after one of GitLab's deployment tiers (`production`, `staging`, `testing`, `development`, `other`) is also the `deployment_tier` of its environments' jobs |
 | `tiers[].name` | name | — | A valid DNS-1123 label (S002), each tier once (S001) |
 | `tiers[].production` | bool | `false` | Its environments are production: `mock` members are an error (X003), `muster uninstall --yes` also needs `--confirm <env>`, and P005 warns when one takes its changes from nowhere |
 | `tiers[].ephemeral` | bool | `false` | Its environments have an instance per branch, named with `--instance`, each stack of each in a namespace of its own that the instance's teardown deletes ([README](README.md#branch-environments)). Never production, no `from` to or from them (E001), and section 9 has what their files need (E002) |
 | `tiers[].manual` | bool | `production` | A person starts each of its environments' jobs in a generated pipeline, even with `--auto` |
-| `tiers[].environments` | map | — | The tier's environments, by name. Every `environments/<env>.yaml` is in exactly one tier, and every name here has that file (S001, S004) |
+| `tiers[].environments` | map | — | The tier's environments, by name. Every `environments/<env>.yaml` but a base's is in exactly one tier, and every name here has that file, or a `base` (S001, S004) |
 | `tiers[].environments.<env>.from` | environment name | — | The environment before this one: the start of a chain when left out. This one comes after it in deploy order, a generated pipeline's deploy job here needs the same stack's job there, and versions reach this one only by `versions promote` from it (V008). It hosts every stack this one hosts (P003, a warning) and runs as its own chart every app this one takes versions for (P004, a warning); an app it doesn't is set here directly. No loops (P002), and not from a later tier (P006, a warning: a pipeline can't wait for a later stage, so `generate gitlab-ci` refuses it). Two environments may promote from the same one |
 | `tiers[].environments.<env>.manual` | bool | the tier's `manual` | The same as the tier's, for this environment only |
+| `tiers[].environments.<env>.base` | base name | — | Only on an ephemeral environment, naming a base in `bases` (E005). Each of the environment's files is optional and layers over the base's of the same kind, as Helm layers `-f` files: a map merges key by key, anything else replaces, and `null` takes out what the base set. Secrets files are both passed, the base's first. The base has no versions file (E003): the environment's own holds its versions. Muster never writes a base ([README](README.md#branch-environments)) |
 
 It also marks the repository root, so Muster can run from any subfolder. `--repo` overrides it.
 
@@ -401,7 +405,7 @@ A SOPS-encrypted Helm values file for one app in one environment, as used with t
 
 Muster resolves one whole stack in one environment at a time, in one pass, always in the same order. Every file is read once, every cell is complete when resolution ends, and a command then prints the cells it was asked for (one app, or all of them).
 
-1. **Load** the stack's Muster files: environment, stack, stack in environment, externals and versions.
+1. **Load** the stack's Muster files: environment, stack, stack in environment, externals and versions. In an environment with a base, each of these but the stack's is the base's file with the environment's own over it.
 2. **Check** them (section 12, structure rules).
 3. **Resolve each member** in member order: its mode, chart and outputs (placeholders filled in: `{release}` is `<prefix><stack>-<app><suffix>`, with the environment's `release.prefix` and `release.suffix`, `{namespace}` the environment's namespace for the stack), and which images it has.
 
@@ -427,6 +431,8 @@ Muster resolves one whole stack in one environment at a time, in one pass, alway
 | 4 | Outputs | generated from wiring | same | same |
 | 5 | Versions | `<env>.versions.yaml` → `versions.<app>.<image>`, at each image's tag path | — | — |
 | 6 | Secrets | `<env>.<app>.secrets.yaml` (via `secrets://`) | same | — |
+
+In an environment with a base, layers 2, 3 and 6 each take the base's file first and the environment's own after it. In an ephemeral environment, layer 5 is the versions file with the command's `--version` over it, and an image in neither takes no tag from the layers before: the deploy fails (E003).
 
 **The rule: general to specific, and the stack's environment file has the last word.** The app's values hold its defaults, the environment adds what every release there needs, and the stack's environment file sets everything else about the app in that stack and environment. A `replicaCount` in `stacks/customer-platform/prod.yaml` wins over one in `apps/payments/values.yaml`. Only outputs, versions and secrets come later.
 
@@ -504,8 +510,9 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 |---|---|
 | E001 | An ephemeral tier is not production; its environments have no `from`, and no environment's `from` names one |
 | E002 | An ephemeral environment's `namespace` uses `{stack}` and `{instance}`, it sets `helm.createNamespace: true`, and it is not `gitops`; no other environment's `namespace` uses `{instance}` |
-| E003 | An ephemeral environment has no committed `<env>.versions.yaml`: an instance's versions come from the values, and a branch's build is set in its pipeline's checkout |
+| E003 | An ephemeral environment's versions file changes only by `versions set` (`promote` and `rollback` refuse it), and a base has none. `--version` overrides it for one run, and only an ephemeral environment takes it. `deploy` and `values` need a version, from one or the other, for each image of each app that runs its own chart, and for that chart when it is in a registry |
 | E004 | `--instance` is lowercase letters, digits and `-`, and makes a namespace of at most 63 characters; `releases`, `values`, `deploy`, `uninstall`, `restart` and `rollback` require it in an ephemeral environment, and every command refuses it in any other |
+| E005 | `base` is only on an ephemeral environment and names a base declared under `bases`; a base is no environment in a tier. Warning: a base no environment names |
 
 **Disabled** (`disabled: true`)
 
