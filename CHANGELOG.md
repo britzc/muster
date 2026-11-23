@@ -2,6 +2,12 @@
 
 What changed in each release of Muster, newest first. What Muster does today is in [README.md](README.md), [CI.md](CI.md) and [CLI.md](CLI.md).
 
+## v0.13.1 (2026-11-24)
+
+**Fixed**
+
+- Release notes link to the files they name at the release's tag: a relative link such as `CI.md` led to a page that doesn't exist on the release page.
+
 ## v0.13.0 (2026-11-24)
 
 **Breaking**
