@@ -1,4 +1,4 @@
-# The CI image for pipelines that run Muster: muster, helm with the
+# The CI image for pipelines that run Muster: muster and muster-ci, helm with the
 # helm-secrets plugin and sops (for SOPS-encrypted values), kubectl (for
 # restarts and checks) and git (to commit version changes).
 #
@@ -32,10 +32,14 @@ RUN apk add --no-cache --virtual .verify gnupg \
  && mkdir -p "$HELM_PLUGINS" && cp -R /root/.local/share/helm/plugins/. "$HELM_PLUGINS/" \
  && rm -rf /tmp/helm-secrets.gpg /root/.gnupg /root/.local/share/helm/plugins \
  && apk del .verify
-# muster, checked against the release checksums.
-ARG MUSTER_VERSION=v0.12.0
+# muster and muster-ci, checked against the release checksums.
+ARG MUSTER_VERSION=v0.13.0
 RUN cd /tmp \
- && curl -fsSLO "https://github.com/britzc/muster/releases/download/${MUSTER_VERSION}/muster-linux-${TARGETARCH}" \
- && curl -fsSL "https://github.com/britzc/muster/releases/download/${MUSTER_VERSION}/SHA256SUMS" | grep " muster-linux-${TARGETARCH}$" | sha256sum -c - \
- && install -m 0755 "muster-linux-${TARGETARCH}" /usr/local/bin/muster \
- && rm "muster-linux-${TARGETARCH}"
+ && curl -fsSL "https://github.com/britzc/muster/releases/download/${MUSTER_VERSION}/SHA256SUMS" -o SHA256SUMS \
+ && for b in muster muster-ci; do \
+      curl -fsSLO "https://github.com/britzc/muster/releases/download/${MUSTER_VERSION}/$b-linux-${TARGETARCH}" \
+      && grep " $b-linux-${TARGETARCH}$" SHA256SUMS | sha256sum -c - \
+      && install -m 0755 "$b-linux-${TARGETARCH}" "/usr/local/bin/$b" \
+      && rm "$b-linux-${TARGETARCH}" || exit 1; \
+    done \
+ && rm SHA256SUMS

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Keeps the versions files in step with the default branch, for the jobs that
-# muster generate gitlab-ci --commit ci/versions.sh writes. Muster never runs
+# muster ci gitlab --commit ci/versions.sh writes. Muster never runs
 # git; this script is the pipeline's.
 #
 #   ci/versions.sh pull            start from the latest default branch: an

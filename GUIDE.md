@@ -48,15 +48,15 @@ environment  →  one cluster (an AWS account and region) and its shared setting
 | Ship an init container's or a sidecar's version | `muster versions set web.sidecar=1.37.0 --env dev --stack hello --write` (`web=…` alone sets web's image named `app`) |
 | Pin an image by digest | `muster versions set web=1.2.0@sha256:… …` |
 | Promote to the next environment | `muster versions promote --env qa --stack hello --write` (from dev, qa's `from` in `muster.yaml`), `muster deploy --env qa --stack hello --yes`, and commit once it passes; then the same for prod, from qa |
-| Ship through CI | `muster generate gitlab-ci --yes --app web --tag 1.2.0 --auto --commit ci/versions.sh` writes the pipeline: dev, then qa, then prod, each committing once it passed. `--to dev` stops in dev; a later `--action promote` takes it on |
+| Ship through CI | `muster ci gitlab --yes --app web --tag 1.2.0 --auto --commit ci/versions.sh` writes the pipeline: dev, then qa, then prod, each committing once it passed. `--to dev` stops in dev; a later `--action promote` takes it on |
 | Put environments in order | `prod: { from: qa }` under its tier in `muster.yaml`: prod deploys after qa and takes versions only from it. `manual`, on the tier or the environment, says whether a person starts its jobs (default: the tier's `production`) |
 | Deploy a stack, or one app | `muster deploy --env qa --stack hello --yes`, `muster deploy --app web --env qa --stack hello --yes` |
 | Restart | `muster restart --app web --env qa --stack hello --yes` |
-| Roll back | `muster versions rollback web=1.0.0 --current 1.1.0 --env prod --stack hello --confirm prod --write`, deploy, commit; or a pipeline with `ACTION=rollback`. prod then rejects 1.1.0, so no promote brings it back; `--accept` takes it back ([README](README.md#rolling-back)) |
+| Roll back | `muster versions set web=1.0.0 --env prod --stack hello --confirm prod --write`, deploy, commit; or a pipeline with `ACTION=rollback`. Roll the environment before back too, or the next promote brings the version back ([README](README.md#rolling-back)) |
 | Roll back fast, in the cluster only | `muster rollback --app web --env prod --stack hello --yes`: helm's previous revision, until the next deploy brings the repository's version back |
 | Freeze an environment, a stack or an app | `disabled: true` and a `reason` in its file, committed ([README](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | Tear down | `muster uninstall --env qa --stack hello --yes` (`--confirm prod` for production; databases are never removed, except with a branch's instance) |
-| Deploy a branch, and tear it down | `muster deploy --env temp --stack shop --instance pr-142 --version api=<tag> --yes` (`--version` overrides `stacks/shop/temp.versions.yaml` for that run), then `muster uninstall --env temp --stack shop --instance pr-142 --yes`, which also deletes its namespace ([README](README.md#branch-environments)); in CI, `muster generate gitlab-ci --instance pr-142 --version … --auto` |
+| Deploy a branch, and tear it down | `muster deploy --env temp --stack shop --instance pr-142 --version api=<tag> --yes` (`--version` overrides `stacks/shop/temp.versions.yaml` for that run), then `muster uninstall --env temp --stack shop --instance pr-142 --yes`, which also deletes its namespace ([README](README.md#branch-environments)); in CI, `muster ci gitlab --instance pr-142 --version … --auto` |
 
 Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm` or `kubectl` calls they would make: run them that way first. The same holds for a generated pipeline: its jobs only print unless it was generated with `--yes`, and `versions set`, `promote` and `rollback` only print the new file unless given `--write`.
 
@@ -67,9 +67,9 @@ Without `--yes`, `deploy`, `uninstall`, `restart` and `rollback` print the `helm
 | An app | `charts/<app>/` (or `chart: oci://…`), `apps/<app>/app.yaml`, `apps/<app>/values.yaml` | List it in a stack's `stack.yaml` |
 | A stack | `stacks/<stack>/stack.yaml` with its members in deploy order, and the environments it runs in | `stacks/<stack>/<env>.yaml` where something differs |
 | An environment | `environments/<env>.yaml`: kube context, namespace, values | its name under `environments` in each stack it hosts (and `stacks/<stack>/<env>.yaml` where something differs), an entry under a tier in `muster.yaml` for its kind and where it sits in the chain, and its versions by `muster versions promote` (or `set`, if it is first) |
-| An environment per branch | an environment as above, in a tier with `ephemeral: true`, with `{stack}` and `{instance}` in its namespace and `helm.createNamespace: true`, and no `from`; or, built on demand, `base: <base>` on it and the files under the base's name, declared in `bases` ([README](README.md#branch-environments)) | `muster validate` |
+| An environment per branch | an environment as above, in a tier with `ephemeral: true`, with `{stack}`, `{env}` and `{instance}` in its namespace and `helm.createNamespace: true`, and no `from`; each branch is an instance of it, `--instance <branch>` ([README](README.md#branch-environments)) | `muster validate` |
 
-`muster validate` says what is missing. The GitLab pipeline picks up new environments, stacks and apps by itself ([README](README.md#gitlab-ci)); an ephemeral environment only in a pipeline generated with `--instance` ([README](README.md#branch-environments)).
+`muster validate` says what is missing. The GitLab pipeline picks up new environments, stacks and apps by itself ([CI.md](CI.md#the-example-pipeline)); an ephemeral environment only in a pipeline generated with `--instance` ([README](README.md#branch-environments)).
 
 ## When a command fails
 

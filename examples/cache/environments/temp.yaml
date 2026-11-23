@@ -1,5 +1,5 @@
-# temp-base: what temp's instances are built from, one per branch, each
-# stack in a namespace of its own, which the instance's teardown deletes.
+# temp: an instance per branch (--instance <branch>), each stack in a
+# namespace of its own, which the instance's teardown deletes.
 apiVersion: muster/v1alpha1
 cluster:
   context: minikube           # point this at your review cluster's kube context

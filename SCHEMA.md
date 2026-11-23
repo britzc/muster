@@ -36,11 +36,10 @@ apps/<app>/values.yaml                    # the app's values, everywhere (plain 
 stacks/<stack>/stack.yaml                 # members in deploy order, wiring
 stacks/<stack>/<env>.yaml                 # this stack in <env>: member modes, each member's values
 stacks/<stack>/<env>.externals.yaml       # outputs of external members in <env>, written by other tools
-stacks/<stack>/<env>.versions.yaml        # image versions to deploy in <env>, written by muster versions --write; none for a base
+stacks/<stack>/<env>.versions.yaml        # image versions to deploy in <env>, written by muster versions set or promote --write
 stacks/<stack>/<env>.<app>.secrets.yaml   # SOPS-encrypted values for one app in <env>
 
 environments/<env>.yaml                   # kube context, namespace, Helm settings, values for every release in <env>
-environments/<base>.yaml                  # a base: what an ephemeral environment is built from (section 3); its stack files go by its name too
 
 providers/<provider>/provider.yaml        # optional: user-defined providers
 providers/<provider>/values.yaml          # optional: defaults for a provider's chart
@@ -73,7 +72,6 @@ The release flow: the kinds of environment (tiers) in deploy order, the environm
 
 ```yaml
 apiVersion: muster/v1alpha1
-bases: [temp-base]                    # what ephemeral environments are built from; never deployed
 tiers:                                # in deploy order: a stage each in a generated pipeline
   - name: development
     environments:
@@ -81,7 +79,7 @@ tiers:                                # in deploy order: a stage each in a gener
   - name: review
     ephemeral: true                   # an instance per branch: commands take --instance
     environments:
-      temp: { base: temp-base }       # its files layer over temp-base's
+      temp: {}                        # an instance per branch, --instance <branch>
   - name: testing
     environments:
       qa: { from: dev }               # qa deploys after dev, and takes versions only from it
@@ -95,16 +93,14 @@ tiers:                                # in deploy order: a stage each in a gener
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `bases` | list of names | — | Files that ephemeral environments are built from, each declared once (S001), a valid name (S002), with its `environments/<base>.yaml` (S004), and no environment (E005). A base is never deployed, listed or named with `--env`. Its stack files go by its name, as an environment's do: `stacks/<stack>/<base>.yaml`, `.versions.yaml`, `.externals.yaml` and `.<app>.secrets.yaml`, in the folders of stacks that run in an environment built from it (S005) |
 | `tiers` | list | — | Required. The kinds of environment, in deploy order. A generated pipeline has a stage per tier, so environments of one tier share a stage. A tier named after one of GitLab's deployment tiers (`production`, `staging`, `testing`, `development`, `other`) is also the `deployment_tier` of its environments' jobs |
 | `tiers[].name` | name | — | A valid DNS-1123 label (S002), each tier once (S001) |
 | `tiers[].production` | bool | `false` | Its environments are production: `mock` members are an error (X003), `muster uninstall --yes` also needs `--confirm <env>`, and P005 warns when one takes its changes from nowhere |
 | `tiers[].ephemeral` | bool | `false` | Its environments have an instance per branch, named with `--instance`, each stack of each in a namespace of its own that the instance's teardown deletes ([README](README.md#branch-environments)). Never production, no `from` to or from them (E001), and section 9 has what their files need (E002) |
 | `tiers[].manual` | bool | `production` | A person starts each of its environments' jobs in a generated pipeline, even with `--auto` |
-| `tiers[].environments` | map | — | The tier's environments, by name. Every `environments/<env>.yaml` but a base's is in exactly one tier, and every name here has that file, or a `base` (S001, S004) |
-| `tiers[].environments.<env>.from` | environment name | — | The environment before this one: the start of a chain when left out. This one comes after it in deploy order, a generated pipeline's deploy job here needs the same stack's job there, and versions reach this one only by `versions promote` from it (V008). It hosts every stack this one hosts (P003, a warning) and runs as its own chart every app this one takes versions for (P004, a warning); an app it doesn't is set here directly. No loops (P002), and not from a later tier (P006, a warning: a pipeline can't wait for a later stage, so `generate gitlab-ci` refuses it). Two environments may promote from the same one |
+| `tiers[].environments` | map | — | The tier's environments, by name. Every `environments/<env>.yaml` is in exactly one tier, and every name here has that file (S001, S004) |
+| `tiers[].environments.<env>.from` | environment name | — | The environment before this one: the start of a chain when left out. This one comes after it in deploy order, a generated pipeline's deploy job here needs the same stack's job there, and versions reach this one only by `versions promote` from it (V008). It hosts every stack this one hosts (P003, a warning) and runs as its own chart every app this one takes versions for (P004, a warning); an app it doesn't is set here directly. No loops (P002), and not from a later tier (P006, a warning: a pipeline can't wait for a later stage, so `ci gitlab` refuses it). Two environments may promote from the same one |
 | `tiers[].environments.<env>.manual` | bool | the tier's `manual` | The same as the tier's, for this environment only |
-| `tiers[].environments.<env>.base` | base name | — | Only on an ephemeral environment, naming a base in `bases` (E005). Each of the environment's files is optional and layers over the base's of the same kind, as Helm layers `-f` files: a map merges key by key, anything else replaces, and `null` takes out what the base set. Secrets files are both passed, the base's first. The base has no versions file (E003): the environment's own holds its versions. Muster never writes a base ([README](README.md#branch-environments)) |
 
 It also marks the repository root, so Muster can run from any subfolder. `--repo` overrides it.
 
@@ -336,7 +332,7 @@ values:                               # every release in qa
 | `disabled` / `reason` | bool / string | `false` | `disabled: true` turns the whole environment off for changes; `reason` says why, and is required with it ([Disabling](README.md#disabling-an-environment-a-stack-or-an-app)) |
 | `versions.tags` | regular expression | any tag | The image tags the environment takes, matched in full, e.g. `'[0-9]+\.[0-9]+\.[0-9]+'` for release tags only. Checked for every image of an app's own chart, wherever its tag comes from: the versions file, a values file or the chart's default (V004) |
 | `cluster.context` | string | — | Required unless `gitops` is `true`. `muster list environments --env <env> --get context` prints it, for a pipeline step that writes the kubeconfig |
-| `namespace` | string | — | May use `{stack}` and `{env}`. In an ephemeral tier it must use `{stack}` and `{instance}`, the instance `--instance` names, so a teardown deletes one stack of one instance; elsewhere `{instance}` is an error (E002). A namespace belongs to one repository: a teardown deletes all of it, and Muster can't see what another repository put there ([CONCEPT](CONCEPT.md) section 11) |
+| `namespace` | string | — | May use `{stack}` and `{env}`; filled in, it is a valid namespace of at most 63 characters: lowercase letters, digits and `-`, starting and ending with a letter or digit (S002). In an ephemeral tier it must use `{stack}`, `{env}` and `{instance}`, the instance `--instance` names, so a teardown deletes one stack of one instance; elsewhere `{instance}` is an error (E002). A namespace belongs to one repository: a teardown deletes all of it, and Muster can't see what another repository put there ([CONCEPT](CONCEPT.md) section 11) |
 | `release.prefix` / `release.suffix` | string / string | `""` / `""` | Added to every release name in the environment, like a Kustomize overlay's `namePrefix` and `nameSuffix`: `<prefix><stack>-<app><suffix>`. Lowercase letters, digits and `-`; a prefix doesn't start with `-` and a suffix doesn't end with it (S002). `{release}` in outputs, and so the wiring, uses the full name. Changing either renames every release: the next deploy installs new releases beside the old ones, which Muster doesn't remove, so uninstall the old ones first, and move a protected release's data by hand (CONCEPT.md section 11) |
 | `helm.wait` / `helm.timeout` / `helm.createNamespace` | bool / duration / bool | `true` / `5m` / `false` | `--wait` and `--timeout` on every helm call, and on the `kubectl delete namespace` of a teardown; `--create-namespace` on deploys, which an ephemeral environment requires (E002). With `wait`, `muster restart` waits for each restart with `kubectl rollout status --timeout`. A generated pipeline's job timeout is its calls' timeouts added up, plus 10 minutes |
 
@@ -378,9 +374,6 @@ versions:
     chart: 1.4.0               # payments' chart is in a registry (app.yaml: chart: oci://…)
   billing:
     app: latest
-rejected:                      # written by versions rollback: never written back without --accept
-  payments:
-    app: [1.4.3]
 ```
 
 - **Keyed by app, then image** (the app's `images`). In `set`, the image can be left out when the app has only one, or has one named `app`, which it then means: `payments=1.4.2` is `payments.app=1.4.2`. Name the others: `payments.migrator=1.4.2`.
@@ -389,9 +382,9 @@ rejected:                      # written by versions rollback: never written bac
 - **It persists.** Every later deploy of the stack in that environment uses it, until it is changed. Commit it, so the next pipeline deploys what the last one did. Git records who changed it and when, so the file holds only versions: writing the same versions again leaves it unchanged.
 - **`chart` is the version of the app's chart, when it is in a registry** (section 1), set with `versions set payments.chart=1.4.0` and copied by `promote` like a tag. Such an app needs it in every environment that hosts it (V006); an app whose chart is in `charts/` has none. It is an exact chart version, and `versions.tags` doesn't apply to it.
 - **It only applies to an app running its own chart** that names `images` or whose chart is in a registry: never to a mock or to a provider's chart filling a slot. `muster list … --versioned` gives where that holds.
-- **It moves along the chain** (§3, `from`). In an environment with a `from`, `set` is refused for every app that environment runs as its own chart, and `promote` copies from it alone, which `--from` defaults to (V008). Without one, `promote` needs `--from`.
-- **A rollback goes straight to the environment, and rejects what it replaces.** `muster versions rollback payments=1.4.2 --current 1.4.3` is the one change an environment with a `from` takes directly. It records `1.4.3` under `rejected`, keyed like `versions`, and is refused when the environment doesn't run the version `--current` names (V010); in a production environment it needs `--confirm <env>` to write. A rejected version is never written back without `--accept`: `set` and a named `promote` refuse it, promoting every app keeps that app's versions with a warning, and `validate` and `deploy` refuse a file whose version is rejected (V009). `--accept` writes it and removes it from `rejected`.
-- `set`, `promote` and `rollback` print the new file; with `--write` they replace it atomically.
+- **It moves along the chain** (§3, `from`). In an environment with a `from`, `set` is refused for every app that environment runs as its own chart, unless `--confirm <env>` names it, and `promote` copies from it alone, which `--from` defaults to (V008). Without one, `promote` needs `--from`.
+- **A rollback is `set --confirm <env>`.** `muster versions set payments=1.4.2 --confirm prod` sets a version in an environment with a `from` directly, the one way past the chain; the tag is still checked (V004). A later promote copies what the environment before runs, so roll that one back too, or ship a fix.
+- `set` and `promote` print the new file; with `--write` they replace it atomically.
 
 ### `stacks/<stack>/<env>.<app>.secrets.yaml`
 
@@ -405,7 +398,7 @@ A SOPS-encrypted Helm values file for one app in one environment, as used with t
 
 Muster resolves one whole stack in one environment at a time, in one pass, always in the same order. Every file is read once, every cell is complete when resolution ends, and a command then prints the cells it was asked for (one app, or all of them).
 
-1. **Load** the stack's Muster files: environment, stack, stack in environment, externals and versions. In an environment with a base, each of these but the stack's is the base's file with the environment's own over it.
+1. **Load** the stack's Muster files: environment, stack, stack in environment, externals and versions.
 2. **Check** them (section 12, structure rules).
 3. **Resolve each member** in member order: its mode, chart and outputs (placeholders filled in: `{release}` is `<prefix><stack>-<app><suffix>`, with the environment's `release.prefix` and `release.suffix`, `{namespace}` the environment's namespace for the stack), and which images it has.
 
@@ -432,7 +425,7 @@ Muster resolves one whole stack in one environment at a time, in one pass, alway
 | 5 | Versions | `<env>.versions.yaml` → `versions.<app>.<image>`, at each image's tag path | — | — |
 | 6 | Secrets | `<env>.<app>.secrets.yaml` (via `secrets://`) | same | — |
 
-In an environment with a base, layers 2, 3 and 6 each take the base's file first and the environment's own after it. In an ephemeral environment, layer 5 is the versions file with the command's `--version` over it, and an image in neither takes no tag from the layers before: the deploy fails (E003).
+In an ephemeral environment, layer 5 is the versions file with the command's `--version` over it, and an image in neither takes no tag from the layers before: the deploy fails (E003).
 
 **The rule: general to specific, and the stack's environment file has the last word.** The app's values hold its defaults, the environment adds what every release there needs, and the stack's environment file sets everything else about the app in that stack and environment. A `replicaCount` in `stacks/customer-platform/prod.yaml` wins over one in `apps/payments/values.yaml`. Only outputs, versions and secrets come later.
 
@@ -475,7 +468,7 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 | X003 | `mock` needs `chart`; `mock` is not allowed in an environment whose tier has `production: true` |
 | X004 | Every requirement of a `helm` or `mock` cell has exactly one source: a member of the same stack, through `wiring` if more than one provides its type |
 | X005 | Every source delivers every output its consumers map: from `provides[].outputs`, provider, externals file and entry combined |
-| X006 | Release names are at most 53 characters, and unique per namespace across the stacks an environment hosts (stack `a-b` with app `c` and stack `a` with app `b-c` both make `a-b-c`) |
+| X006 | Release names are at most 53 characters, and unique per kube context and namespace, across every stack and environment: two stacks that make the same name (stack `a-b` with app `c` and stack `a` with app `b-c` both make `a-b-c`), or two environments on one context that give a stack the same namespace, would deploy and uninstall each other's releases |
 | X007 | Every key under `members`, `values`, `wiring` and an externals file's `outputs` names a member; `values.<app>` is not set for an `external` member; a member entry's `chart` is only set with `mode: mock` |
 
 **Versions** (`<env>.versions.yaml`, and the tags an environment takes)
@@ -490,8 +483,6 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 | V006 | An app whose own chart is in a registry has `<app>.chart` in the versions file of every environment that hosts it, an exact chart version; an app whose chart is in `charts/` has none |
 | V007 | Each image of an app whose chart is in a registry gets its tag from the versions file or a values file, never the chart's default, which Muster can't read |
 | V008 | An environment with a `from` takes versions only by `promote` from that environment, or by `rollback`: `set` is refused for an app the environment before runs as its own chart, and `promote --from` any other environment is refused |
-| V009 | No version in the file is one it lists under `rejected` (a rollback rejected it); every app and image under `rejected` is one `versions` could hold. `set`, `promote` and `rollback` write a rejected version only with `--accept`, which removes it from `rejected` |
-| V010 | `versions rollback` replaces the version `--current` names, and only when the environment runs it: nothing changes when it runs another, or none |
 
 **Promotion** (`from` in `muster.yaml`, the order of environments)
 
@@ -502,17 +493,16 @@ Errors stop every command except `validate`. `validate` reports every problem, n
 | P003 | Warning: the environment before hosts every stack this one hosts; one it doesn't takes versions set directly, and its deploys wait for no other environment |
 | P004 | Warning: the environment before runs as its own chart every app this one takes versions for; one it mocks, or runs from a provider or as external, takes versions set directly, without running there first |
 | P005 | Warning: a production environment has a `from` when there are other environments, so nothing reaches it untested |
-| P006 | Warning: `from` names an environment in a later tier. A generated pipeline can't wait for a later stage, so `generate gitlab-ci` refuses it |
+| P006 | Warning: `from` names an environment in a later tier. A generated pipeline can't wait for a later stage, so `ci gitlab` refuses it |
 
 **Ephemeral** (`ephemeral: true` on a tier: an instance per branch)
 
 | Code | Rule |
 |---|---|
 | E001 | An ephemeral tier is not production; its environments have no `from`, and no environment's `from` names one |
-| E002 | An ephemeral environment's `namespace` uses `{stack}` and `{instance}`, it sets `helm.createNamespace: true`, and it is not `gitops`; no other environment's `namespace` uses `{instance}` |
+| E002 | An ephemeral environment's `namespace` uses `{stack}`, `{env}` and `{instance}`, it sets `helm.createNamespace: true`, and it is not `gitops`; no other environment's `namespace` uses `{instance}` |
 | E003 | An ephemeral environment's versions file changes only by `versions set` (`promote` and `rollback` refuse it), and a base has none. `--version` overrides it for one run, and only an ephemeral environment takes it. `deploy` and `values` need a version, from one or the other, for each image of each app that runs its own chart, and for that chart when it is in a registry |
 | E004 | `--instance` is lowercase letters, digits and `-`, and makes a namespace of at most 63 characters; `releases`, `values`, `deploy`, `uninstall`, `restart` and `rollback` require it in an ephemeral environment, and every command refuses it in any other |
-| E005 | `base` is only on an ephemeral environment and names a base declared under `bases`; a base is no environment in a tier. Warning: a base no environment names |
 
 **Disabled** (`disabled: true`)
 
