@@ -2,6 +2,17 @@
 
 What changed in each release of Muster, newest first. What Muster does today is in [README.md](README.md), [CI.md](CI.md) and [CLI.md](CLI.md).
 
+## v0.15.0 (2026-11-24)
+
+**Breaking**
+
+- **A pipeline's jobs follow where apps are defined in stacks.** `muster ci gitlab` has a job per stack (`--by stack`, the default) or per app in each stack (`--by app`): every job is one stack's, so none deploys outside it, and an app in several stacks has a job in each, moving on in each by itself. `--by app` used to give one job per app across every stack that has it (`--all-stacks`); it now gives what `--by cell` did, and `--by cell` is gone (it says to use `--by app`). `--stack` and `--app` can be given together. Jobs per app are named `<stack>/<app>` (`deploy hello/web in qa`), and their commits name the stack (`ship web=1.2.0 to dev (hello)`). The hello pipeline's `deploy` input offers `stack` or `app`.
+- **Install `muster` and `muster-ci` v0.15.0 together.** The JSON contract between them is 2: each call in `deploy`, `uninstall`, `restart` and `rollback --json` names its `stack` and `app`. `muster-ci` refuses a `muster` of contract 1, and the other way round, with a message that says to install both from one release.
+
+**Changed**
+
+- Generating a pipeline makes a few `muster` calls per environment, not one per job: each environment's calls and members come in one `--json` call, and each job takes its own. The pipelines are the same as before; a large matrix generates in a fraction of the time.
+
 ## v0.14.0 (2026-11-24)
 
 The same as v0.13.1: it carries v0.13's changes (above all `muster ci gitlab` and the second binary, `muster-ci`) under a new minor version. Upgrading from v0.12 or earlier, read v0.13.0's breaking changes.

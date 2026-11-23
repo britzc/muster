@@ -526,7 +526,7 @@ Usage:
   muster ci [command]
 
 Available Commands:
-  gitlab      A GitLab child pipeline for a matrix: a stage per tier, a job per cell
+  gitlab      A GitLab child pipeline for a matrix: a stage per tier, a job per stack or app
   help        Help about any command
   version     The release of muster-ci, and of the muster it runs
 
@@ -539,21 +539,19 @@ Use "muster ci [command] --help" for more information about a command.
 ### `muster ci gitlab`
 
 ```text
-Prints a GitLab child pipeline that runs a muster command for each cell of a
+Prints a GitLab child pipeline that runs a muster command for each stack of a
 matrix: a stage per tier (tiers in muster.yaml, in their order), and in it a
-job per stack each of the tier's environments hosts (the default), per app it
-deploys in every stack that has it (--by app), or per app in each stack
-(--by cell), so an app in several stacks moves on in each by itself. With a
-stack named (--stack), a job per environment that hosts it; with an app named
-(--app, which implies --by app), a job per environment that deploys it. With
---by cell, --stack and --app narrow the cells and may be given together. A
-pipeline covers one stack or app, or every one. An app gets a job only where it
-runs a chart or a mock.
+job per stack each of the tier's environments hosts (the default), or per app
+in each of those stacks (--by app). Every job is one stack's, so the pipeline
+follows where apps are defined: an app in several stacks has a job in each,
+and moves on in each by itself. --stack and --app narrow the jobs, alone or
+together; an app named (--app) implies --by app. An app gets a job only where
+it runs a chart or a mock.
 
 Each job runs a muster command, and Muster makes every helm and kubectl call:
-muster ci reads the repository only through it (muster list, versions and
-the operations' --json), so a name it doesn't have, or a version it would
-refuse, fails generating, not a job.
+muster ci reads the repository only through it (muster list, releases,
+versions and the operations' --json), so a name it doesn't have, or a
+version it would refuse, fails generating, not a job.
 
 Without --yes, the jobs only print their helm and kubectl calls, as every
 muster command does: a pipeline that shows what it would do, e.g. in a merge
@@ -623,7 +621,7 @@ rollback, helm's previous revision in the cluster only, is for a person at a
 terminal, and has no pipeline job.
 
 Usage:
-  muster ci gitlab [-s <stack>] [-a <app>] [--by stack|app|cell] [--action <action>] [-t <tag>] [--chart <version>] [--commit <script>] [--to <env>] [--yes] [flags]
+  muster ci gitlab [-s <stack>] [-a <app>] [--by stack|app] [--action <action>] [-t <tag>] [--chart <version>] [--commit <script>] [--to <env>] [--yes] [flags]
 
 Examples:
   muster ci gitlab                                     # every deploy, printed only (a merge request)
@@ -634,7 +632,7 @@ Examples:
   muster ci gitlab --yes --app web --tag 1.2.0 --auto --commit ci/versions.sh --to qa  # ship web to dev, then qa
   muster ci gitlab --yes --action promote --commit ci/versions.sh                      # promote every stack
   muster ci gitlab --yes --action rollback --app web --tag 1.0.0 --to prod --commit ci/versions.sh  # web back to 1.0.0 in prod
-  muster ci gitlab --yes --by cell --stack hello --app web --tag 1.2.0 --commit ci/versions.sh  # ship web in hello only
+  muster ci gitlab --yes --stack hello --app web --tag 1.2.0 --commit ci/versions.sh  # ship web in hello only
   muster ci gitlab --yes --action restart --production=false  # restart every stack, off main
   muster ci gitlab --yes --instance "$CI_COMMIT_REF_SLUG" --version api="$CI_COMMIT_SHORT_SHA" --auto  # the branch's instance, with its api
 
@@ -643,7 +641,7 @@ Flags:
   -a, --app stringArray       only this app: a job per environment that deploys it
       --auto                  start the jobs of environments that aren't manual without waiting (manual in muster.yaml, by default the tier's production)
       --auto-stop-in string   with --instance: when GitLab stops the instance's environments if nothing deploys to them (default "1 week")
-      --by string             a job per stack an environment hosts (stack, the default), per app it deploys (app; --app implies it), or per app in each stack (cell)
+      --by string             a job per stack an environment hosts (stack, the default), or per app in each of those stacks (app; --app implies it)
       --chart string          with --app: the version of its chart in a registry to ship, or roll back to
       --commit string         the pipeline's script that pulls the default branch before a versions change and commits and pushes it after the deploy
       --image string          the jobs' image, e.g. $CI_JOB_IMAGE

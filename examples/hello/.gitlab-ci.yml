@@ -67,8 +67,8 @@ spec:
       options: [deploy, uninstall, restart, promote, rollback]
       default: deploy
     deploy:
-      description: A job per stack, per app (in every stack that has it), or per cell (an app in one stack); the cells of a named stack or app with cell, and always when both are named
-      options: [stack, app, cell]
+      description: A job per stack, or per app in each stack (always when an app is named)
+      options: [stack, app]
       default: stack
     stack:
       description: "One stack, through every environment that hosts it; empty for every stack"
@@ -108,7 +108,8 @@ check:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # The matrix, as a child pipeline that muster ci gitlab writes: a
-# job per cell, each deploy after the same stack's in the environment before
+# job per stack (or app in a stack), each deploy after the same one's in the
+# environment before
 # (muster ci gitlab --help).
 #   merge request  every stack in every environment, printed only
 #                (no --yes): each job shows the helm calls a deploy would
@@ -126,10 +127,11 @@ check:
 #   schedule     promote along the chain, starting itself where it may
 #   Run pipeline the inputs' choice, every job manual:
 #     stack              a job per stack each environment hosts
-#     app                a job per app each environment deploys
-#     stack named        a job per environment that hosts the stack
-#     app named          a job per environment that deploys the app
-#     cell, or both      a job per app in each stack (--by cell)
+#     app                a job per app in each of those stacks
+#     stack named        a job per environment that hosts the stack (per
+#                        app in it with app)
+#     app named          a job per stack that has the app, in each
+#                        environment; with a stack named too, that stack's
 #     app and version    a job in dev, setting the version first (not
 #                        committed)
 #     promote            a job per stack each environment with a from
@@ -158,7 +160,7 @@ plan:
         trigger)
           set -- --yes --app "$APP" --auto --commit ci/versions.sh
           if [ "${ACTION:-}" = rollback ]; then set -- "$@" --action rollback; fi
-          if [ -n "${STACK:-}" ]; then set -- "$@" --stack "$STACK" --by cell; fi
+          if [ -n "${STACK:-}" ]; then set -- "$@" --stack "$STACK"; fi
           if [ -n "${TAG:-}" ]; then set -- "$@" --tag "$TAG${DIGEST:+@$DIGEST}"; fi
           if [ -n "${CHART:-}" ]; then set -- "$@" --chart "$CHART"; fi
           if [ -n "${TO:-}" ]; then set -- "$@" --to "$TO"; fi
@@ -167,11 +169,7 @@ plan:
           set -- --yes --action "$ACTION"
           if [ -n "$STACK_INPUT" ]; then set -- "$@" --stack "$STACK_INPUT"; fi
           if [ -n "$APP_INPUT" ]; then set -- "$@" --app "$APP_INPUT"; fi
-          if [ "$DEPLOY" = cell ] || { [ -n "$STACK_INPUT" ] && [ -n "$APP_INPUT" ]; }; then
-            set -- "$@" --by cell
-          elif [ -z "$STACK_INPUT$APP_INPUT" ]; then
-            set -- "$@" --by "$DEPLOY"
-          fi
+          if [ -z "$APP_INPUT" ]; then set -- "$@" --by "$DEPLOY"; fi # an app named is per app
           if [ -n "$VERSION" ]; then set -- "$@" --tag "$VERSION"; fi
           if [ "$ACTION" = promote ] || [ "$ACTION" = rollback ]; then set -- "$@" --commit ci/versions.sh; fi
           if [ -n "$TO_INPUT" ]; then set -- "$@" --to "$TO_INPUT"; fi
@@ -194,7 +192,8 @@ plan:
     # has several; set the others by name with muster versions set
     # web.sidecar=…), DIGEST optional and passed on unchecked, CHART the
     # version of an app's chart in a registry (oci://… or https://… in its
-    # app.yaml), STACK optional: ship it in that stack alone (a job per cell):
+    # app.yaml), STACK optional: ship it in that stack alone (otherwise in each
+    # stack that has it, a job each):
     #   curl -X POST -F token=$TRIGGER_TOKEN -F ref=main \
     #     -F "variables[APP]=payments" -F "variables[TAG]=1.4.2" -F "variables[DIGEST]=sha256:…" \
     #     -F "variables[CHART]=1.4.2" -F "variables[TO]=qa" \

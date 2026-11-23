@@ -38,7 +38,7 @@ flowchart LR
     end
 
     list["muster list … --names<br/>the axes, in deploy order,<br/>without what is disabled"]
-    gen["muster ci gitlab<br/>a stage per tier,<br/>a job per cell"]
+    gen["muster ci gitlab<br/>a stage per tier,<br/>a job per stack"]
 
     subgraph pipeline["Pipeline"]
         direction LR

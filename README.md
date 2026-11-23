@@ -22,7 +22,7 @@ done
 Two binaries:
 
 - **`muster`** reads the repository, composes the values and makes every `helm` and `kubectl` call. Deploying needs `helm` on the `PATH`; the kube context in each environment file decides which cluster a call reaches.
-- **`muster-ci`** generates the pipelines a CI system runs Muster in, run as `muster ci gitlab` (`muster ci` runs `muster-ci` beside `muster` or on the `PATH`, and other CI systems can follow as `muster ci <system>`). It knows the repository only through `muster`: `muster list … --json`, `versions`, and the calls `deploy`, `uninstall`, `restart` and `rollback --json` give. So it makes no call of its own, and every rule Muster applies holds in a pipeline too. Leave it out where no pipeline is generated.
+- **`muster-ci`** generates the pipelines a CI system runs Muster in, run as `muster ci gitlab` (`muster ci` runs `muster-ci` beside `muster` or on the `PATH`, and other CI systems can follow as `muster ci <system>`). It knows the repository only through `muster`: `muster list … --json`, `releases --json`, `versions`, and the calls `deploy`, `uninstall`, `restart` and `rollback --json` give. So it makes no call of its own, and every rule Muster applies holds in a pipeline too. Leave it out where no pipeline is generated.
 
 `muster help` and `muster <command> --help` describe every command and flag; `muster ci help` the pipelines'.
 
@@ -341,7 +341,7 @@ Each command's every flag, as `--help` prints it, is in [CLI.md](CLI.md).
 | `muster rollback [--app <app>] <selection>` | Prints the `helm rollback` calls, in reverse order, to each release's previous revision or `--to <revision>`; `--yes` runs them |
 | `muster versions [--app <app>] <selection>` | Prints each release's images, the version each gets and where it comes from; `--json` for scripts |
 | `muster versions set\|promote … --write` | Changes a stack's image versions in one environment (the only file Muster writes); `set --confirm <env>` sets one past the chain, such as a rollback |
-| `muster ci gitlab [--stack <stack> \| --app <app>]` | Runs `muster-ci`, which prints a GitLab child pipeline for a matrix: a stage per tier, a job per cell ([CI.md](CI.md#gitlab-child-pipelines)); its jobs only print their calls unless `--yes` is given. It reads the repository through `muster`, so a name the repository doesn't have, or a version Muster would refuse, fails generating, not a job |
+| `muster ci gitlab [--stack <stack> \| --app <app>]` | Runs `muster-ci`, which prints a GitLab child pipeline for a matrix: a stage per tier, a job per stack or per app in each stack ([CI.md](CI.md#gitlab-child-pipelines)); its jobs only print their calls unless `--yes` is given. It reads the repository through `muster`, so a name the repository doesn't have, or a version Muster would refuse, fails generating, not a job |
 
 Every command that selects releases takes the same form, `muster <command> --env <env> --stack <stack> [--app <app>]`, and only flags, in any order: Muster reads no environment variables, so a command line always means the same thing. The stack is always named, even when an environment hosts only one, so a command means the same thing after a stack is added. Each selection flag has a short form for typing: `-e`, `-s`, `-a`, `-i` for `--instance`, and `-t` for `ci gitlab --tag`.
 
