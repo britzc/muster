@@ -2,6 +2,10 @@
 
 What changed in each release of Muster, newest first. What Muster does today is in [README.md](README.md), [CI.md](CI.md) and [CLI.md](CLI.md).
 
+## v0.14.0 (2026-11-24)
+
+The same as v0.13.1: it carries v0.13's changes (above all `muster ci gitlab` and the second binary, `muster-ci`) under a new minor version. Upgrading from v0.12 or earlier, read v0.13.0's breaking changes.
+
 ## v0.13.1 (2026-11-24)
 
 **Fixed**
