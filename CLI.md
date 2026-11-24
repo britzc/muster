@@ -26,7 +26,7 @@ an instance per branch, --instance <name> names the instance. Short forms: -e,
 Exit codes: 2 when the command line is wrong (an unknown command or flag, a
 missing, conflicting or malformed one, or a name the repository doesn't have);
 1 when the repository has a problem or refuses the change, or helm or kubectl
-failed.
+failed; 3 when versions promote --exit-unchanged has nothing new to promote.
 
 Usage:
   muster [command]
@@ -462,6 +462,7 @@ Examples:
 Flags:
   -a, --app stringArray     only this app (repeatable); without one, every app
   -e, --env string          the environment
+      --exit-unchanged      exit 3 when there is nothing new to promote (the file would not change), so a job deploys only what a promotion changed
       --from string         the environment to copy versions from (default: the environment's from in muster.yaml)
   -s, --stack stringArray   the stack whose versions file changes
       --write               update the versions file (the only file Muster writes)

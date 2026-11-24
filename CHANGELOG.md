@@ -2,6 +2,13 @@
 
 What changed in each release of Muster, newest first. What Muster does today is in [README.md](README.md), [CI.md](CI.md) and [CLI.md](CLI.md).
 
+## v0.16.0 (2026-11-24)
+
+**Added**
+
+- **Release trains: a promote deploys only what it changed.** Every `--action promote` job runs `muster versions promote … --write --exit-unchanged` first; with nothing new to promote, the job ends there, passing, with no helm call (no new Helm revision, no hooks) and nothing committed. So a pipeline schedule can promote an environment on the hour, and it changes only when something new passed the environment before. See [A release train](CI.md#a-release-train).
+- `muster versions promote --exit-unchanged`: exit 3 when the environment already holds the versions it would promote. `versions set` and `promote` no longer rewrite a file whose content would not change.
+
 ## v0.15.0 (2026-11-24)
 
 **Breaking**
