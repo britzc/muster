@@ -2,6 +2,14 @@
 
 What changed in each release of Muster, newest first. What Muster does today is in [README.md](README.md), [CI.md](CI.md) and [CLI.md](CLI.md).
 
+## v0.17.0 (2026-11-24)
+
+**Added**
+
+- **A release train in the hello example.** A pipeline schedule on `main`, on the hour, with the inputs `action: promote` and `env: prod` and the variable `APPROVE_ENVIRONMENT=prod`, promotes prod from qa by itself, and changes prod only when something new passed qa. Only a schedule's pipeline honours `APPROVE_ENVIRONMENT`. See [A release train](CI.md#a-release-train).
+- `muster ci gitlab --env <env>`: only that environment, such as the one a release train promotes into (`--to` is a chain up to one).
+- `muster ci gitlab --approve <env>` with `--auto`: that manual environment's jobs start themselves too, in this pipeline only; naming it is the approval, as a schedule gives it. Every other pipeline still waits for a person there.
+
 ## v0.16.0 (2026-11-24)
 
 **Added**

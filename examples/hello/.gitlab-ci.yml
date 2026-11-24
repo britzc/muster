@@ -15,7 +15,8 @@
 #   trigger         an app's pipeline ships a new image, or rolls one back
 #                   (see plan below)
 #   schedule        a pipeline schedule that sets the action input to promote
-#                   promotes along the chain, e.g. nightly into qa
+#                   promotes along the chain, e.g. nightly into qa; with the
+#                   env input, one environment: a release train (below)
 #
 # The order of environments is in the repository: the tiers in muster.yaml,
 # a stage each, and each environment's from (qa from dev, prod from qa).
@@ -82,6 +83,9 @@ spec:
     to:
       description: "Only this environment and the ones before it on its chain, e.g. qa for dev and qa; empty for every environment. With rollback, the environment to roll back"
       default: ""
+    env:
+      description: "Only this environment, e.g. prod for a release train that promotes into prod alone; empty for every environment"
+      default: ""
 ---
 
 default:
@@ -94,6 +98,10 @@ variables:
   # The age key helm-secrets decrypts the secrets files with (see above).
   # Child pipelines inherit it.
   SOPS_AGE_KEY_FILE: $CI_PROJECT_DIR/sops-demo.agekey
+  # A manual environment (prod) whose jobs a schedule starts without a person:
+  # set it on the release train's schedule only (below). Any other pipeline
+  # ignores it, so prod's jobs there still wait for a person.
+  APPROVE_ENVIRONMENT: ""
 
 stages: [check, deploy]
 
@@ -125,6 +133,21 @@ check:
 #                environment before runs, so roll that one back too, or
 #                ship a fix.
 #   schedule     promote along the chain, starting itself where it may
+#   release train  a schedule that promotes one environment from the one
+#                before, e.g. prod from qa on the hour. Set it up in Build >
+#                Pipeline schedules > New schedule:
+#                  interval      0 * * * *            (on the hour)
+#                  branch        main
+#                  inputs        action: promote, env: prod
+#                  variable      APPROVE_ENVIRONMENT = prod
+#                Each run is one job, prod's: muster versions promote
+#                --exit-unchanged first, so with nothing new in qa it ends
+#                there, passing, with no helm call and nothing committed;
+#                when something new passed qa, it deploys it and commits it.
+#                APPROVE_ENVIRONMENT=prod lets that job start itself
+#                (--approve prod): leave it out and each run's job waits for
+#                a person, like any prod job. Protect main, since a schedule
+#                runs as its owner.
 #   Run pipeline the inputs' choice, every job manual:
 #     stack              a job per stack each environment hosts
 #     app                a job per app in each of those stacks
@@ -152,6 +175,7 @@ plan:
     APP_INPUT: $[[ inputs.app ]]
     VERSION: $[[ inputs.version ]]
     TO_INPUT: $[[ inputs.to ]]
+    ENV_INPUT: $[[ inputs.env ]]
   script:
     - |
       case "$CI_PIPELINE_SOURCE" in
@@ -173,7 +197,13 @@ plan:
           if [ -n "$VERSION" ]; then set -- "$@" --tag "$VERSION"; fi
           if [ "$ACTION" = promote ] || [ "$ACTION" = rollback ]; then set -- "$@" --commit ci/versions.sh; fi
           if [ -n "$TO_INPUT" ]; then set -- "$@" --to "$TO_INPUT"; fi
-          if [ "$CI_PIPELINE_SOURCE" != web ]; then set -- "$@" --auto; fi ;;
+          if [ -n "$ENV_INPUT" ]; then set -- "$@" --env "$ENV_INPUT"; fi
+          if [ "$CI_PIPELINE_SOURCE" != web ]; then set -- "$@" --auto; fi
+          # Only a schedule starts a manual environment's jobs by itself,
+          # and only the one it names.
+          if [ "$CI_PIPELINE_SOURCE" = schedule ] && [ -n "$APPROVE_ENVIRONMENT" ]; then
+            set -- "$@" --approve "$APPROVE_ENVIRONMENT"
+          fi ;;
       esac
       # Printing changes nothing, so a merge request shows production too.
       if [ "$CI_PIPELINE_SOURCE" != merge_request_event ] && [ "$CI_COMMIT_BRANCH" != "$CI_DEFAULT_BRANCH" ]; then

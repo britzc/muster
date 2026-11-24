@@ -49,16 +49,18 @@ By default a pipeline has a job per stack an environment hosts, and `--by app` o
 A release train moves an environment on a schedule instead of on every change: prod takes, say on the hour, whatever passed in qa since. It is a promote pipeline that a GitLab pipeline schedule runs:
 
 ```bash
-muster ci gitlab --yes --action promote --to prod --skip qa --commit ci/versions.sh --auto
+muster ci gitlab --yes --action promote --env prod --auto --approve prod --commit ci/versions.sh
 ```
 
-`--to prod --skip qa` leaves prod's job alone. Every promote job runs `muster versions promote … --write --exit-unchanged` first, and deploys only what the promotion changed:
+`--env prod` gives prod's job alone. Prod is manual, so its job would wait for a person; `--approve prod` starts it by itself, in this pipeline only: naming the environment is the approval, as `--confirm prod` is for an uninstall. Main's pipeline still waits for a person in prod. Every promote job runs `muster versions promote … --write --exit-unchanged` first, and deploys only what the promotion changed:
 
 - **Nothing new in qa:** the promote leaves the versions file as it is and exits 3, and the job ends there, passing: no helm call, so no new Helm revision and no hook runs, and nothing to commit. The environment is as it was, and `muster rollback` still has the revision before the last real change to go back to.
 - **Something new passed qa:** the promote writes prod's versions file, the job deploys it and commits it once the deploy passed. The next tick finds nothing new again.
 - **A failed deploy** commits nothing, so the next tick pulls the old file, finds the same change, and tries again.
 
-The committed versions file is the record of what an environment runs, since a job commits only after its deploy passed; so the train needs no look at the cluster to know whether there is anything to do. It moves versions only: a change to an environment's values reaches it through main's pipeline, as before, and a change made by hand in the cluster is not corrected (that is reconciliation, a GitOps controller's job). Prod is manual by default (`manual` in `muster.yaml`), so a schedule's prod job waits for a person; set `manual: false` on the tier for the train to deploy prod by itself. A rollback in prod alone (`versions set --confirm prod`) lasts only until the next tick promotes qa's version again, so roll qa back too, or ship a fix.
+The committed versions file is the record of what an environment runs, since a job commits only after its deploy passed; so the train needs no look at the cluster to know whether there is anything to do. It moves versions only: a change to an environment's values reaches it through main's pipeline, as before, and a change made by hand in the cluster is not corrected (that is reconciliation, a GitOps controller's job). Without `--approve`, each run's prod job waits for a person, as prod is manual by default (`manual` in `muster.yaml`). A rollback in prod alone (`versions set --confirm prod`) lasts only until the next tick promotes qa's version again, so roll qa back too, or ship a fix.
+
+In the [example pipeline](#the-example-pipeline), the train is a pipeline schedule (Build > Pipeline schedules) on `main`, every hour (`0 * * * *`), with the inputs `action: promote` and `env: prod`, and the variable `APPROVE_ENVIRONMENT` set to `prod`. Only a schedule's pipeline honours `APPROVE_ENVIRONMENT`, so Run pipeline and the API still leave prod's jobs to a person. A schedule runs as its owner, so protect `main` and keep the schedule's owner someone who may deploy prod.
 
 ## A branch's instance
 
@@ -96,7 +98,7 @@ review:
 | `plan`, `matrix` | triggered by an app's pipeline with `APP`, and `TAG` (optionally with `DIGEST`), `CHART` (the version of its chart in a registry) or both | Ships it: `versions set` in dev, deploy, commit and push (`[skip ci]`); then promote to qa, deploy, commit; prod waits for a person. A deploy that fails commits nothing and stops what comes after it. `TO` stops it at an environment, e.g. `TO=dev` |
 | `plan`, `matrix` | triggered with `ACTION=rollback`, `APP`, `TAG` (the older version, or `CHART`) and `TO` (the environment) | Rolls back: one job in `TO` that runs `versions set --confirm <TO>`, deploys, and commits once the deploy passed. In a manual environment such as prod, a person starts the job |
 | `plan`, `matrix` | the pipelines API with the same inputs as Run pipeline, from another system such as a customer app | What the inputs choose; jobs start themselves except in manual environments |
-| `plan`, `matrix` | a pipeline schedule that sets the `action` input to `promote` | Promotes along the chain on a schedule, e.g. nightly into qa: each environment's jobs start themselves unless it is manual. A schedule that also sets `to` promotes into that environment and those before it ([A release train](#a-release-train)) |
+| `plan`, `matrix` | a pipeline schedule that sets the `action` input to `promote` | Promotes along the chain on a schedule, e.g. nightly into qa: each environment's jobs start themselves unless it is manual. With the `env` input, that environment alone: a [release train](#a-release-train), which starts the manual prod job by itself only with the variable `APPROVE_ENVIRONMENT` set to `prod` on the schedule |
 
 **Only main deploys to every environment.** A pipeline run by hand from another branch offers only the non-production environments (`muster list environments --production=false`), for testing a branch. Protect the production environments in GitLab to enforce it there too; with required approvals, their jobs wait for an approver.
 

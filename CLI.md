@@ -632,6 +632,7 @@ Examples:
   muster ci gitlab --yes --app web --tag 1.2.0 --auto --commit ci/versions.sh          # ship web through the chain
   muster ci gitlab --yes --app web --tag 1.2.0 --auto --commit ci/versions.sh --to qa  # ship web to dev, then qa
   muster ci gitlab --yes --action promote --commit ci/versions.sh                      # promote every stack
+  muster ci gitlab --yes --action promote --env prod --auto --approve prod --commit ci/versions.sh  # a release train's run: prod from qa, by itself
   muster ci gitlab --yes --action rollback --app web --tag 1.0.0 --to prod --commit ci/versions.sh  # web back to 1.0.0 in prod
   muster ci gitlab --yes --stack hello --app web --tag 1.2.0 --commit ci/versions.sh  # ship web in hello only
   muster ci gitlab --yes --action restart --production=false  # restart every stack, off main
@@ -640,11 +641,13 @@ Examples:
 Flags:
       --action string         the command each job runs: deploy, uninstall, restart, promote or rollback (versions, then deploy) (default "deploy")
   -a, --app stringArray       only this app: a job per environment that deploys it
+      --approve string        with --auto: this manual environment's jobs start themselves too; naming it approves them, as a schedule does
       --auto                  start the jobs of environments that aren't manual without waiting (manual in muster.yaml, by default the tier's production)
       --auto-stop-in string   with --instance: when GitLab stops the instance's environments if nothing deploys to them (default "1 week")
       --by string             a job per stack an environment hosts (stack, the default), or per app in each of those stacks (app; --app implies it)
       --chart string          with --app: the version of its chart in a registry to ship, or roll back to
       --commit string         the pipeline's script that pulls the default branch before a versions change and commits and pushes it after the deploy
+  -e, --env string            only this environment, such as the one a release train promotes into
       --image string          the jobs' image, e.g. $CI_JOB_IMAGE
   -i, --instance string       only the ephemeral environments, for this instance of them, such as the branch's slug
       --production            only production environments; --production=false for only the others
