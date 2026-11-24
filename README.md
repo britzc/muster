@@ -10,14 +10,15 @@ Background: [CONCEPT.md](CONCEPT.md) (the why, and [how environments, stacks and
 
 ## Install
 
-Download the binaries for your platform from the [releases](https://github.com/britzc/muster/releases) (`muster-<os>-<arch>`, and `muster-ci-<os>-<arch>` to generate pipelines; checksums in `SHA256SUMS`) and put them on your `PATH`, for example on Linux:
+Download the bundle for your platform from the [releases](https://github.com/britzc/muster/releases): `muster-bundle-<os>-<arch>.tar.gz` holds `muster` and `muster-ci`, from one release, so they always match. Unpack both into a folder on your `PATH`, for example on Linux:
 
 ```bash
-for b in muster muster-ci; do
-  curl -fsSLo $b https://github.com/britzc/muster/releases/latest/download/$b-linux-amd64
-  chmod +x $b && sudo mv $b /usr/local/bin/
-done
+curl -fsSLO https://github.com/britzc/muster/releases/latest/download/muster-bundle-linux-amd64.tar.gz
+curl -fsSL https://github.com/britzc/muster/releases/latest/download/SHA256SUMS | grep ' muster-bundle-linux-amd64.tar.gz$' | sha256sum -c -
+sudo tar -xzf muster-bundle-linux-amd64.tar.gz -C /usr/local/bin muster muster-ci
 ```
+
+Each binary is also there by itself (`muster-<os>-<arch>`, `muster-ci-<os>-<arch>`), with its checksum in `SHA256SUMS`.
 
 Two binaries:
 
@@ -354,7 +355,7 @@ Every command that selects releases takes the same form, `muster <command> --env
 | `--instance <name>` with any of these | The instance of an [ephemeral environment](#branch-environments); required there, refused elsewhere |
 | `--version <app>[.<image>]=<tag>` with `deploy`, `values` or `releases` | Overrides the versions file of an [ephemeral environment](#branch-environments) for that run only, and is never written (repeatable); refused elsewhere |
 
-**Exit codes:** 0 when the command did what it says. 2 when the command line is wrong: an unknown command or flag, a missing, conflicting or malformed flag or argument, or a name the repository doesn't have where the command line uses it (an environment, stack or app that doesn't exist, a stack the environment doesn't host, an app not in the stack); fix the command. 1 when the command line is fine but the result isn't: the repository has a problem or refuses the change (validation errors, something disabled, a tag the environment doesn't take, nothing to do), or helm or kubectl failed; fix the repository or the cluster. 3 only from `versions promote --exit-unchanged`, when there is nothing new to promote: the environment already holds the versions of the one before, so nothing is written.
+**Exit codes:** 0 when the command did what it says. 2 when the command line is wrong: an unknown command or flag, a missing, conflicting or malformed flag or argument, or a name the repository doesn't have where the command line uses it (an environment, stack or app that doesn't exist, a stack the environment doesn't host, an app not in the stack); fix the command. 1 when the command line is fine but the result isn't: the repository has a problem or refuses the change (validation errors, something disabled, a tag the environment doesn't take), or helm or kubectl failed; fix the repository or the cluster. 3 when there is nothing to do and that is not a mistake: from `versions promote --exit-unchanged`, when the environment already holds the versions of the one before, so nothing is written; and from `muster ci gitlab`, when the selection is valid but has no job (a promote where no environment it covers has a `from`, say), so it writes no pipeline and says why on stderr.
 
 `--repo <dir>` points at the repository, or any folder inside it (default: the current folder). [Getting started](#getting-started-the-hello-example) shows most commands' output; the notes below cover what it doesn't.
 

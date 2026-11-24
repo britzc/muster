@@ -210,7 +210,16 @@ plan:
         set -- "$@" --production=false
       fi
       for env in $SKIP_ENVIRONMENTS; do set -- "$@" --skip "$env"; done
-      muster ci gitlab "$@" --image "$CI_JOB_IMAGE" > matrix.yml
+      code=0
+      muster ci gitlab "$@" --image "$CI_JOB_IMAGE" > matrix.yml || code=$?
+      # 3: the inputs are valid, but nothing they select applies (a promote
+      # into dev, which takes its versions from no environment): a child of
+      # one job that says so, since GitLab can't trigger an empty one.
+      if [ "$code" = 3 ]; then
+        printf 'nothing to do:\n  image: %s\n  script: ["echo nothing to do; the plan job says why"]\n' "$CI_JOB_IMAGE" > matrix.yml
+      elif [ "$code" != 0 ]; then
+        exit "$code"
+      fi
     - cat matrix.yml
   artifacts:
     paths: [matrix.yml]

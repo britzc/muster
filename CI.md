@@ -4,7 +4,7 @@
 
 **It knows the repository only through `muster`.** It reads the release flow from `muster list … --json` and `muster list tiers`, each stack's members from `muster releases --json`, and each job's calls (for its timeout) from the operation's `--json`, one call per environment for all its jobs. It checks a version with a printing-only `muster versions set`, and writes into a branch's stop job the calls `muster uninstall --json` gives. So it makes no `helm` or `kubectl` call of its own, every rule Muster applies holds in a pipeline too, and a name the repository doesn't have, or a version Muster would refuse, fails generating, with Muster's own message, rather than a job.
 
-**Both come from one release.** `muster ci version` shows the two; `muster-ci` refuses a `muster` whose JSON contract (`muster version`) is not the one it reads, and says to install the two from one release.
+**Both come from one release.** `muster ci version` shows the two; `muster-ci` refuses a `muster` whose JSON contract (`muster version`) is not the one it reads, and says to install the two from one release: each release's `muster-bundle-<os>-<arch>.tar.gz` holds both.
 
 [README.md](README.md) covers Muster itself: the repository, values, versions and the commands a job runs. [MATRIX.md](MATRIX.md) explains the continuous delivery principles behind the pipelines.
 
@@ -44,6 +44,22 @@ $ muster ci gitlab --yes --action restart --skip local                       # r
 
 By default a pipeline has a job per stack an environment hosts, and `--by app` one per app in each of those stacks. Every job is one stack's, so the pipeline follows where apps are defined: an app in several stacks has a job in each, moves on in each by itself, and each job sets or promotes the versions of its own stack only. A stage per tier in every case (`tiers` in `muster.yaml`), so all production environments share one stage, while each job still waits only for its own environment before. A tier named after one of GitLab's deployment tiers (`production`, `staging`, `testing`, `development`, `other`) also sets the jobs' `deployment_tier`. It covers every stack and app, or narrows them: `--stack <stack>` to one stack, `--app <app>` to one app (a job per stack that has it, so `--app` implies `--by app`), or both. What is disabled gets no job, an app only gets one where it runs a chart or a mock, and an uninstall from production carries `--confirm`. `--auto` starts the jobs of every environment that isn't manual (`manual` in `muster.yaml`, by default the tier's `production`); a manual job that a later one needs gets `allow_failure: false`, so the later one waits for it. `--tag` and `--chart` ship a version of the named app: with `--commit <script>`, set where the chain starts and promoted from each environment to the next, each job committing once its deploy passed; without it, only where the chain starts and not committed, for testing a build. `--action promote` promotes each environment from the one before, then deploys. `--action rollback --app <app> --tag <older> --to <env>` rolls the app back in that environment alone, with `versions set --confirm <env>` ([Rolling back](README.md#rolling-back)). `--to <env>` stops at an environment: only it and those before it on its chain, so `--tag 1.2.0 --commit … --to dev` sets and commits a version in dev alone, and a later promote takes it on. Without `--yes`, the jobs only print their calls, as every Muster command does, and as a merge request's pipeline wants: they have no GitLab environment, so nothing records a deployment, and they take no `--commit`. A pipeline acts only when `--yes` is written out: then each job's command carries `--yes`, and the job a `timeout`: its helm calls' timeouts added up, since a stack's releases deploy one after another, plus 10 minutes. `muster ci gitlab --help` has every flag. [MATRIX.md](MATRIX.md) explains the continuous delivery principles behind matrix deployments.
 
+### One environment, or a chain up to one
+
+`--env <env>` gives that environment's jobs alone; `--to <env>` gives it and the environments before it on its chain (`from`, in `muster.yaml`). When environments are peers rather than a chain (dev01 to dev06, each deployed by itself), `--env dev04` is how a pipeline input picks one: a deploy or a ship has a job there and nowhere else. `--skip <env>` (repeatable) leaves an environment out of a larger selection.
+
+### Checking a pipeline
+
+`--json` gives the pipeline as JSON instead of YAML, from the same flags and the same checks: its `action`, whether it `run`s its calls, its `stages`, and each job's `name`, `stage`, `environment`, `target`, `stack`, `app` (`""` for a job per stack), `manual`, `needs`, `stop`, `timeout_minutes` and `script`. A pipeline's own checks read it rather than the YAML, whose job names are for people:
+
+```console
+$ muster ci gitlab --yes --action promote --commit ci/versions.sh --json | jq -r '.jobs[] | "\(.environment) \(.stack)"'
+qa hello
+prod hello
+```
+
+`muster ci gitlab` exits 2 when the command line is wrong or names what the repository doesn't have, and 1 when the repository has a problem or Muster refuses. When the selection is valid but has no job, such as a promote into an environment with no `from`, it prints nothing and exits 3, with the reason on stderr, so a parent pipeline can tell "nothing to do" from a mistake by the code alone. `--json` exits the same way.
+
 ## A release train
 
 A release train moves an environment on a schedule instead of on every change: prod takes, say on the hour, whatever passed in qa since. It is a promote pipeline that a GitLab pipeline schedule runs:
@@ -80,7 +96,7 @@ review:
 
 ## The example pipeline
 
-[examples/hello/.gitlab-ci.yml](examples/hello/.gitlab-ci.yml) is the hello repository's pipeline. It names no environment, stack or app: every one comes from [`muster list --names`](README.md#list), so adding an environment or a stack to the repository adds it to the pipeline, and disabling one takes it out. It deploys [matrices](#gitlab-child-pipelines): its `plan` job turns the run's inputs into flags for [`muster ci gitlab`](#gitlab-child-pipelines), and runs the child pipeline it prints, a stage per tier and a job per cell.
+[examples/hello/.gitlab-ci.yml](examples/hello/.gitlab-ci.yml) is the hello repository's pipeline. It names no environment, stack or app: every one comes from [`muster list --names`](README.md#list), so adding an environment or a stack to the repository adds it to the pipeline, and disabling one takes it out. It deploys [matrices](#gitlab-child-pipelines): its `plan` job turns the run's inputs into flags for [`muster ci gitlab`](#gitlab-child-pipelines), and runs the child pipeline it prints, a stage per tier and a job per cell. When the inputs are valid but select nothing that applies, such as a promote into dev, which takes its versions from no environment, `muster ci gitlab` exits 3 and prints no pipeline; `plan` then writes a child of one job that says so, since GitLab can't trigger an empty child. Exit 1 or 2 fails `plan`.
 
 - **Image:** build it from this repository's [Dockerfile](Dockerfile) (`docker build -t registry.example.com/platform/muster:1 .`). It holds `muster` and `muster-ci`, `helm` with the helm-secrets plugin (checked against its author's signature), `sops` (checked against its release checksums), `kubectl` and `git`.
 - **Secrets:** the age key that decrypts the SOPS files, as a GitLab CI/CD variable `SOPS_AGE_KEY_FILE` of type File. It takes precedence over the example's `SOPS_AGE_KEY_FILE`, which points at the demo key.

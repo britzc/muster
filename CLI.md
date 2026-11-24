@@ -26,7 +26,8 @@ an instance per branch, --instance <name> names the instance. Short forms: -e,
 Exit codes: 2 when the command line is wrong (an unknown command or flag, a
 missing, conflicting or malformed one, or a name the repository doesn't have);
 1 when the repository has a problem or refuses the change, or helm or kubectl
-failed; 3 when versions promote --exit-unchanged has nothing new to promote.
+failed; 3 when versions promote --exit-unchanged has nothing new to promote,
+or muster ci has no job to generate.
 
 Usage:
   muster [command]
@@ -520,7 +521,9 @@ applies every rule. muster ci reads the repository only through the muster
 CLI, so it never acts on a cluster, or on a repository, itself.
 
 Exit codes: 2 when the command line is wrong, or names what the repository
-doesn't have; 1 when the repository has a problem, or Muster refuses.
+doesn't have; 3 when it is valid but selects nothing that applies, such as a
+promote where no environment has a from: no pipeline, and the reason on
+stderr; 1 when the repository has a problem, or Muster refuses.
 
 Usage:
   muster ci [flags]
@@ -561,6 +564,17 @@ commit nothing, so --commit needs --yes. With --yes, each job's command
 carries --yes, so it runs the calls, and the job a timeout: its calls' helm
 timeouts added up, plus 10 minutes for the rest. A pipeline only changes
 anything when --yes is written out.
+
+A selection that is valid but has no job, such as a promote where no
+environment it covers has a from, writes no pipeline and exits 3, with the
+reason on stderr: a parent pipeline skips its child on 3, and fails on 1 or 2.
+
+--json gives the same pipeline as JSON, from the same flags and the same
+checks: its stages, and each job with its environment, stack and app (""
+for a job per stack, and for a stop job, which covers several), whether it is
+manual, the jobs it needs and its script. A pipeline's own checks read it, not
+the YAML's job names, which are for people. It exits as the YAML does: 2, 3
+or 1, with no JSON.
 
 --to <env> stops the pipeline at an environment: only it and the ones it
 promotes from (from, in muster.yaml), back to the start of its chain.
@@ -636,6 +650,7 @@ Examples:
   muster ci gitlab --yes --action rollback --app web --tag 1.0.0 --to prod --commit ci/versions.sh  # web back to 1.0.0 in prod
   muster ci gitlab --yes --stack hello --app web --tag 1.2.0 --commit ci/versions.sh  # ship web in hello only
   muster ci gitlab --yes --action restart --production=false  # restart every stack, off main
+  muster ci gitlab --yes --action promote --commit ci/versions.sh --json | jq -r '.jobs[].environment'  # where a promote has jobs
   muster ci gitlab --yes --instance "$CI_COMMIT_REF_SLUG" --version api="$CI_COMMIT_SHORT_SHA" --auto  # the branch's instance, with its api
 
 Flags:
@@ -650,6 +665,7 @@ Flags:
   -e, --env string            only this environment, such as the one a release train promotes into
       --image string          the jobs' image, e.g. $CI_JOB_IMAGE
   -i, --instance string       only the ephemeral environments, for this instance of them, such as the branch's slug
+      --json                  the pipeline as JSON, not YAML: its stages, and each job's name, environment, stack, app, needs and script; for a pipeline's own checks
       --production            only production environments; --production=false for only the others
       --skip stringArray      an environment the pipeline never reaches (repeatable)
   -s, --stack stringArray     only this stack: a job per environment that hosts it

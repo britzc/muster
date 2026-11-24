@@ -2,6 +2,18 @@
 
 What changed in each release of Muster, newest first. What Muster does today is in [README.md](README.md), [CI.md](CI.md) and [CLI.md](CLI.md).
 
+## v0.18.0 (2026-11-25)
+
+**Added**
+
+- `muster ci gitlab --json`: the pipeline as JSON instead of YAML, from the same flags and checks: its stages, and each job's name, environment, target, stack, app, whether it is manual, what it needs, its timeout and its script. A pipeline's own checks read it instead of matching job names. See [Checking a pipeline](CI.md#checking-a-pipeline).
+- **A bundle per platform in each release.** `muster-bundle-<os>-<arch>.tar.gz` holds `muster` and `muster-ci` (`.exe` on Windows), from one release, under the names `muster ci` looks for: one download and one checksum (in `SHA256SUMS`) installs both. The separate binaries are still there.
+- CI.md: [One environment, or a chain up to one](CI.md#one-environment-or-a-chain-up-to-one): `--env` for one of several peer environments, `--to` for a chain.
+
+**Changed**
+
+- **`muster ci gitlab` exits 3 when there is no job.** A selection that is valid, and names only what the repository has, but has no job (a promote where no environment it covers has a `from`, an app that is disabled everywhere, no ephemeral environment for `--instance`) now prints no pipeline and exits 3 with the reason on stderr, instead of exiting 1. A parent pipeline can skip its child, or run a placeholder, on 3 alone, and still fail on 1 or 2. A promote with no `from` says so: `nothing to promote: no environment the selection covers takes its versions from another (from, in muster.yaml): dev`. The hello example's `plan` job turns exit 3 into a child of one job that says there is nothing to do.
+
 ## v0.17.0 (2026-11-24)
 
 **Added**
